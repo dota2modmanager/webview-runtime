@@ -1,0 +1,89 @@
+# Builds both engines, checks them, and publishes a release with the archives and runtime.json.
+# Started by hand: a new engine is a decision, not something every push makes.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      webview2_url:
+        description: "Microsoft's link to Microsoft.WebView2.FixedVersionRuntime.<version>.x64.cab"
+        required: true
+      tag:
+        description: "Release tag, e.g. 2026.11.27"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: build on the AppImage's base
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w \
+            -e RELEASE_URL_BASE="https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}" \
+            ubuntu:24.04 sh linux/build.sh dist
+      - name: run on other distributions
+        run: |
+          smoke='sh linux/smoke.sh dist/webkitgtk-linux-x64-*.tar.gz'
+          docker run --rm -v "$PWD:/w" -w /w fedora:41 sh -c "dnf -y -q install tar gzip findutils >/dev/null && $smoke"
+          docker run --rm -v "$PWD:/w" -w /w archlinux:latest sh -c "$smoke"
+          docker run --rm -v "$PWD:/w" -w /w debian:trixie sh -c "$smoke"
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: dist/*, if-no-files-found: error }
+
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch and check Microsoft's cab
+        shell: pwsh
+        env:
+          WEBVIEW2_URL: ${{ inputs.webview2_url }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          $name = [IO.Path]::GetFileName($env:WEBVIEW2_URL)
+          ./windows/fetch-fixed.ps1 -Url $env:WEBVIEW2_URL -Out dist `
+            -ReleaseUrl "https://github.com/${{ github.repository }}/releases/download/$env:TAG/$name"
+      - name: our install of it, end to end
+        shell: pwsh
+        run: |
+          $entry = Get-Content dist/runtime-windows-x64.json -Raw | ConvertFrom-Json
+          @{ format = 1; runtimes = @($entry) } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 dist/try.json
+          $cab = Get-ChildItem dist/*.cab | Select-Object -First 1
+          cargo run --locked --release -- install --base "$env:RUNNER_TEMP/wvr" --manifest dist/try.json --from $cab.FullName
+          if ($LASTEXITCODE -ne 0) { throw "install failed" }
+          Remove-Item dist/try.json
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: "dist/*.cab\ndist/*.json", if-no-files-found: error }
+
+  publish:
+    needs: [test, linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: runtime.json
+        run: |
+          jq -n --slurpfile w dist/runtime-windows-x64.json --slurpfile l dist/runtime-linux-x64.json \
+            '{format: 1, runtimes: ($w + $l)}' > runtime.json
+          cat runtime.json
+          cargo test --locked the_embedded_manifest_parses
+      - name: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$TAG" --title "$TAG" --notes-file runtime.json \
+            runtime.json dist/*.cab dist/*.tar.gz

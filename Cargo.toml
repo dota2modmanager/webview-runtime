@@ -1,0 +1,27 @@
+[package]
+name = "webview-runtime"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "A WebView engine Dota 2 Mod Manager puts in itself when the system one is missing or broken"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "webview-runtime"
+path = "src/bin/webview-runtime.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+ureq = { version = "3", default-features = false, features = ["native-tls"] }
+flate2 = "1"
+tar = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Registry"] }
