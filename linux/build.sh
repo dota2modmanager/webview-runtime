@@ -24,7 +24,7 @@
 #     libraries than the image's is what drew black windows and crashed GTK on rolling
 #     distributions (#761, #797). Here Mesa comes with the libraries it was built against.
 #   * libwebkit2gtk looks for WebKitWebProcess and WebKitNetworkProcess at a path compiled in
-#     (/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1). Its "/usr" is rewritten to "././" (same length),
+#     (/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1). Its "/usr/" is rewritten to "././/" (same length),
 #     so the helpers are found under the working folder, which the app sets to this folder.
 #     WEBKIT_EXEC_PATH would be the clean way, but release builds of WebKit ignore it.
 #   * caches that hold absolute paths are written with @ROOT@ and listed in fixups.txt; the
@@ -109,7 +109,11 @@ done)
 for f in "$STAGE/$LIB"/libwebkit2gtk-4.1.so.0.*; do
   [ -L "$f" ] && continue
   grep -c "/usr/$LIB/webkit2gtk-4.1" "$f" >/dev/null || { echo "no helper path in $f" >&2; exit 1; }
-  sed -i "s|/usr/$LIB/webkit2gtk-4.1|././$LIB/webkit2gtk-4.1|g" "$f"
+  # "/usr/" and "././/" are both five bytes: the file must not change size, or every offset
+  # after the path moves and the loader crashes on the library (it did, with "././")
+  before=$(stat -c %s "$f")
+  sed -i "s|/usr/$LIB/webkit2gtk-4.1|././/$LIB/webkit2gtk-4.1|g" "$f"
+  [ "$(stat -c %s "$f")" -eq "$before" ] || { echo "patching changed the size of $f" >&2; exit 1; }
 done
 
 # Debian and Ubuntu keep GTK's and GLib's helper tools out of PATH, in the libraries' folders

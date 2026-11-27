@@ -185,7 +185,7 @@ pub fn linux_launch(dir: &Path, software: bool, own_glibc: bool) -> Launch {
         vars.push(("LIBGL_ALWAYS_SOFTWARE".into(), "1".into()));
         vars.push(("WEBKIT_DISABLE_COMPOSITING_MODE".into(), "1".into()));
     }
-    // libwebkit2gtk is patched to find its helper processes at ././lib/... (linux/build.sh)
+    // libwebkit2gtk is patched to find its helper processes at ././/lib/... (linux/build.sh)
     Launch { vars, cwd: Some(dir.to_path_buf()), wrap }
 }
 

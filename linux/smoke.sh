@@ -30,7 +30,7 @@ for helper in WebKitWebProcess WebKitNetworkProcess; do
   [ -x "$ROOT/$LIB/webkit2gtk-4.1/$helper" ] || { echo "no $helper" >&2; exit 1; }
   [ -f "$ROOT/$LIB/webkit2gtk-4.1/$helper.real" ] || { echo "$helper is not wrapped" >&2; exit 1; }
 done
-grep -q "././$LIB/webkit2gtk-4.1" "$ROOT/$LIB/libwebkit2gtk-4.1.so.0" || { echo "helper path not patched" >&2; exit 1; }
+grep -q "././/$LIB/webkit2gtk-4.1" "$ROOT/$LIB/libwebkit2gtk-4.1.so.0" || { echo "helper path not patched" >&2; exit 1; }
 
 LIST=$(mktemp)
 find "$ROOT" -type f \( -name '*.so*' -o -name '*.real' \) ! -path "$ROOT/glibc/*" >"$LIST"
@@ -61,6 +61,15 @@ printf '{"format":1,"runtimes":[%s]}\n' "$(cat "$ENTRY")" >"$BASE/manifest.json"
 "$LAUNCHER" status --base "$BASE/rt" --manifest "$BASE/manifest.json"
 
 # --- 4: a page drawn ------------------------------------------------------------------------------
+if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ "${SMOKE_XVFB:-0}" != 1 ]; then
+  # a real desktop: draw on it
+  export NO_AT_BRIDGE=1
+  echo "drawing on the desktop's display (DISPLAY=${DISPLAY:-} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-})"
+  "$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json"
+  "$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json" --software
+  echo "ok: $name"
+  exit 0
+fi
 if ! command -v Xvfb >/dev/null 2>&1; then
   if [ "${REQUIRE_SELFTEST:-0}" = 1 ]; then
     echo "no Xvfb to draw on" >&2
