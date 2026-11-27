@@ -1,58 +1,78 @@
 #!/bin/sh
-# Checks the Linux engine on a distribution other than the one it was built on:
-#   * the host's glibc is at least the bundle's floor (share/doc/GLIBC.txt);
-#   * every ELF in the bundle finds every library it needs, and none but glibc's from the host;
-#   * the helper processes are where the patched libwebkit2gtk looks for them, and they load:
-#     started with no arguments they must get past the dynamic loader.
+# Checks the Linux engine on a distribution other than the one it was built on, the way the app
+# would use it there:
+#   1. the bundle is whole: every library each of its programs and libraries needs resolves inside
+#      it (asked of the bundle's own loader, so this works on musl and NixOS too);
+#   2. the helper processes are where the patched libwebkit2gtk looks for them;
+#   3. the static launcher installs the archive (hash, unpack, @ROOT@) and decides, from the host,
+#      whether the bundle runs on the host's glibc or its own;
+#   4. with a display (Xvfb), wvr-selftest draws a page, runs its script and checks the pixels.
 #
-#   docker run --rm -v "$PWD:/w" -w /w archlinux sh linux/smoke.sh dist/webkitgtk-linux-x64-*.tar.gz
+#   sh linux/smoke.sh ARCHIVE ENTRY.json LAUNCHER
+# REQUIRE_SELFTEST=1 fails when no Xvfb is there to draw on.
 set -eu
 ARCHIVE=$1
+ENTRY=$2
+LAUNCHER=$3
+LIB=lib/x86_64-linux-gnu
+
+name=$( (. /etc/os-release && echo "$PRETTY_NAME") 2>/dev/null || echo unknown)
+echo "== $name"
+
+# --- 1 and 2: the bundle as it is in the archive ----------------------------------------------
 DIR=$(mktemp -d)
 tar -C "$DIR" -xzf "$ARCHIVE"
 ROOT="$DIR/webkit"
-LIB=lib/x86_64-linux-gnu
-HELPERS="$ROOT/$LIB/webkit2gtk-4.1"
-
-name=$( (. /etc/os-release && echo "$PRETTY_NAME") 2>/dev/null || echo unknown)
-host_glibc=$(ldd --version 2>&1 | head -1 | grep -o '[0-9][0-9]*\.[0-9][0-9]*$')
-floor=$(cat "$ROOT/share/doc/GLIBC.txt")
-echo "$name: glibc $host_glibc, bundle needs $floor"
-if [ "$(printf '%s\n%s\n' "$floor" "$host_glibc" | sort -V | head -1)" != "$floor" ]; then
-  echo "glibc $host_glibc is older than $floor" >&2
-  exit 1
-fi
+LOADER="$ROOT/glibc/ld-linux-x86-64.so.2"
+PATHS="$ROOT/glibc:$ROOT/$LIB"
 
 for helper in WebKitWebProcess WebKitNetworkProcess; do
-  [ -x "$HELPERS/$helper" ] || { echo "no $helper" >&2; exit 1; }
+  [ -x "$ROOT/$LIB/webkit2gtk-4.1/$helper" ] || { echo "no $helper" >&2; exit 1; }
+  [ -f "$ROOT/$LIB/webkit2gtk-4.1/$helper.real" ] || { echo "$helper is not wrapped" >&2; exit 1; }
 done
 grep -q "././$LIB/webkit2gtk-4.1" "$ROOT/$LIB/libwebkit2gtk-4.1.so.0" || { echo "helper path not patched" >&2; exit 1; }
 
 bad=0
-for f in $(find "$ROOT" -type f -name '*.so*') "$HELPERS/WebKitWebProcess" "$HELPERS/WebKitNetworkProcess"; do
+checked=0
+for f in $(find "$ROOT" -type f \( -name '*.so*' -o -name '*.real' \) ! -path "$ROOT/glibc/*"); do
   head -c 4 "$f" | grep -q 'ELF' || continue
-  out=$(LD_LIBRARY_PATH="$ROOT/$LIB" ldd "$f" 2>&1 || true)
+  checked=$((checked + 1))
+  out=$("$LOADER" --library-path "$PATHS" --list "$f" 2>&1 || true)
   if echo "$out" | grep -q 'not found'; then
     echo "$f:" >&2
     echo "$out" | grep 'not found' >&2
     bad=1
   fi
-  # a library the host supplied instead of the bundle (other than glibc) means a mix
-  host=$(echo "$out" | awk '/=> \//{print $3}' | grep -v "^$ROOT/" |
-    grep -Ev '/(ld-linux-x86-64|libc|libm|libdl|libpthread|librt|libresolv|libutil|libanl|libnsl|libmvec)\.so' || true)
-  if [ -n "$host" ]; then
-    echo "$f takes from the host: $host" >&2
+  outside=$(echo "$out" | awk '/=> \//{print $3}' | grep -v "^$ROOT/" || true)
+  if [ -n "$outside" ]; then
+    echo "$f takes from outside the bundle: $outside" >&2
     bad=1
   fi
 done
-
-for helper in WebKitWebProcess WebKitNetworkProcess; do
-  err=$(cd "$ROOT" && LD_LIBRARY_PATH="$ROOT/$LIB" timeout 10 "$HELPERS/$helper" 2>&1 || true)
-  if echo "$err" | grep -Eq 'error while loading shared libraries|version .GLIBC_|symbol lookup error'; then
-    echo "$helper does not load: $err" >&2
-    bad=1
-  fi
-done
-
 [ "$bad" -eq 0 ] || exit 1
-echo "ok: $(find "$ROOT" -type f | wc -l) files, $(du -sh "$ROOT" | cut -f1)"
+echo "whole: $checked ELF files resolve inside the bundle"
+
+# --- 3: installed by the launcher, as the app's start would ----------------------------------
+BASE=$(mktemp -d)
+printf '{"format":1,"runtimes":[%s]}\n' "$(cat "$ENTRY")" >"$BASE/manifest.json"
+"$LAUNCHER" install --base "$BASE/rt" --manifest "$BASE/manifest.json" --from "$ARCHIVE" >/dev/null
+"$LAUNCHER" status --base "$BASE/rt" --manifest "$BASE/manifest.json"
+
+# --- 4: a page drawn ------------------------------------------------------------------------------
+if ! command -v Xvfb >/dev/null 2>&1; then
+  if [ "${REQUIRE_SELFTEST:-0}" = 1 ]; then
+    echo "no Xvfb to draw on" >&2
+    exit 1
+  fi
+  echo "no Xvfb: the page was not drawn"
+  exit 0
+fi
+Xvfb :99 -screen 0 640x480x24 -nolisten tcp >/dev/null 2>&1 &
+xvfb=$!
+trap 'kill $xvfb 2>/dev/null || true' EXIT
+i=0
+while [ ! -e /tmp/.X11-unix/X99 ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
+export DISPLAY=:99 NO_AT_BRIDGE=1
+"$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json"
+"$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json" --software
+echo "ok: $name"

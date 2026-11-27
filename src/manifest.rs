@@ -33,6 +33,10 @@ pub struct Runtime {
     pub root: String,
     /// A file that must be there after unpacking, relative to the engine folder.
     pub check: String,
+    /// Linux: the oldest host glibc the bundle runs on with the host's own loader (`2.35`). An
+    /// older one, none (musl), or NixOS: the bundle runs on the glibc it carries.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub glibc: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +112,9 @@ impl Runtime {
         }
         if self.check.is_empty() || !self.check.split('/').all(plain) {
             return bad("check is not a plain relative path".into());
+        }
+        if !self.glibc.is_empty() && crate::system::parse_version(&self.glibc).is_none() {
+            return bad(format!("glibc {} is not a version", self.glibc));
         }
         Ok(())
     }

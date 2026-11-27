@@ -15,6 +15,41 @@ pub fn real_version(pv: &str) -> bool {
     parts.len() == 4 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) && pv != "0.0.0.0"
 }
 
+/// `2.35` as (2, 35); anything else None.
+pub fn parse_version(v: &str) -> Option<(u32, u32)> {
+    let (major, minor) = v.trim().split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+/// What the host offers a glibc program, as far as the bundle cares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Host {
+    /// The glibc version behind `/lib64/ld-linux-x86-64.so.2`, None where there is no such loader
+    /// (musl: Alpine, Void musl) or it is not glibc's.
+    pub glibc: Option<(u32, u32)>,
+    /// NixOS: its loader at /lib64, where there is one, is nix-ld's stand-in, and its glibc lives
+    /// in /nix/store under a version the bundle's libraries were not built against.
+    pub nixos: bool,
+}
+
+/// Whether the bundle must run on the glibc it carries, through its own loader, rather than on
+/// the host's: no glibc, NixOS, or a glibc older than the bundle's floor (Ubuntu 20.04, Debian 11).
+pub fn needs_own_glibc(host: &Host, floor: &str) -> bool {
+    let Some(have) = host.glibc else { return true };
+    if host.nixos {
+        return true;
+    }
+    match parse_version(floor) {
+        Some(need) => have < need,
+        None => false,
+    }
+}
+
+/// This machine, for [`needs_own_glibc`]. Only meaningful on Linux.
+pub fn host() -> Host {
+    imp::host()
+}
+
 #[cfg(windows)]
 mod imp {
     use super::{real_version, WEBVIEW2_CLIENT};
@@ -60,6 +95,10 @@ mod imp {
                 })
             })
     }
+
+    pub fn host() -> super::Host {
+        super::Host { glibc: None, nixos: false }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -70,12 +109,46 @@ mod imp {
     pub fn engine_present() -> bool {
         LIB_DIRS.iter().any(|d| std::path::Path::new(d).join("libwebkit2gtk-4.1.so.0").exists())
     }
+
+    const LOADER: &str = "/lib64/ld-linux-x86-64.so.2";
+
+    pub fn host() -> super::Host {
+        let nixos = std::path::Path::new("/etc/NIXOS").exists();
+        let glibc = std::path::Path::new(LOADER).exists().then(glibc_version).flatten();
+        super::Host { glibc, nixos }
+    }
+
+    /// glibc 2.33 and newer answer `ld.so --version` ("... release version 2.39."); older ones,
+    /// and a loader that is not glibc's, fall through to getconf.
+    fn glibc_version() -> Option<(u32, u32)> {
+        let run = |cmd: &str, args: &[&str]| {
+            std::process::Command::new(cmd).args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        };
+        if let Some(v) = run(LOADER, &["--version"]).as_deref().and_then(super::version_in_ld_so) {
+            return Some(v);
+        }
+        let text = run("getconf", &["GNU_LIBC_VERSION"])?;
+        super::parse_version(text.trim().strip_prefix("glibc ")?)
+    }
+}
+
+/// The version in the first line of `ld.so --version`.
+pub fn version_in_ld_so(text: &str) -> Option<(u32, u32)> {
+    let line = text.lines().next()?;
+    if !line.contains("release version") {
+        return None;
+    }
+    line.split_whitespace().last().and_then(|w| parse_version(w.trim_end_matches('.')))
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
 mod imp {
     pub fn engine_present() -> bool {
         true
+    }
+
+    pub fn host() -> super::Host {
+        super::Host { glibc: None, nixos: false }
     }
 }
 
@@ -90,5 +163,28 @@ mod tests {
         assert!(!real_version(""));
         assert!(!real_version("142.0"));
         assert!(!real_version("142.0.x.1"));
+    }
+
+    #[test]
+    fn the_loader_s_version_line_is_read() {
+        let text = "ld.so (Ubuntu GLIBC 2.39-0ubuntu8.6) stable release version 2.39.
+Copyright (C) 2024";
+        assert_eq!(version_in_ld_so(text), Some((2, 39)));
+        let text = "ld.so (GNU libc) stable release version 2.41.
+";
+        assert_eq!(version_in_ld_so(text), Some((2, 41)));
+        assert_eq!(version_in_ld_so("nix-ld 2.0.4"), None);
+    }
+
+    #[test]
+    fn own_glibc_where_the_host_has_none_or_an_old_one_or_is_nixos() {
+        let host = |glibc, nixos| Host { glibc, nixos };
+        assert!(needs_own_glibc(&host(None, false), "2.35"), "Alpine, Void musl");
+        assert!(needs_own_glibc(&host(Some((2, 39)), true), "2.35"), "NixOS with nix-ld");
+        assert!(needs_own_glibc(&host(Some((2, 31)), false), "2.35"), "Ubuntu 20.04");
+        assert!(!needs_own_glibc(&host(Some((2, 35)), false), "2.35"));
+        assert!(!needs_own_glibc(&host(Some((2, 41)), false), "2.35"));
+        assert!(!needs_own_glibc(&host(Some((2, 9)), false), ""), "no floor known: the host's");
+        assert!(parse_version("2.10") > parse_version("2.9"));
     }
 }

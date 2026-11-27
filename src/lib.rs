@@ -9,9 +9,10 @@
 //! * Windows: Microsoft's WebView2 **Fixed Version** runtime, unpacked into the app's data folder
 //!   and used through `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`. Nothing is installed system-wide, no
 //!   EdgeUpdate, no registry.
-//! * Linux: WebKitGTK 4.1 with everything it links (GTK, GLib, GStreamer, ICU, and Mesa's
-//!   software renderer), built on one base system ([`linux/build.sh`]) and run as a whole, so
-//!   nothing of the host is mixed in except glibc and the display server.
+//! * Linux: WebKitGTK 4.1 with everything it links (GTK, GLib, GStreamer, ICU, Mesa) and glibc
+//!   itself, built on one base system (`linux/build.sh`) and run as a whole. The host's glibc is
+//!   used where it is new enough; on musl (Alpine, Void), NixOS, or an old glibc the bundle runs
+//!   through the loader it carries.
 //!
 //! The archives are pinned in [`MANIFEST`] by size and SHA-256, so the manifest the app was built
 //! with decides what may be run; a download that differs is thrown away.
@@ -132,9 +133,12 @@ pub fn env_for(installed: &Installed, software: bool) -> Launch {
             if software {
                 vars.push(("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS".into(), "--disable-gpu".into()));
             }
-            Launch { vars, cwd: None }
+            Launch { vars, cwd: None, wrap: Vec::new() }
         }
-        Platform::LinuxX64 => store::linux_launch(&installed.dir, software),
+        Platform::LinuxX64 => {
+            let own_glibc = system::needs_own_glibc(&system::host(), &installed.runtime.glibc);
+            store::linux_launch(&installed.dir, software, own_glibc)
+        }
     }
 }
 
@@ -142,6 +146,33 @@ pub fn env_for(installed: &Installed, software: bool) -> Launch {
 pub struct Launch {
     pub vars: Vec<(String, String)>,
     pub cwd: Option<PathBuf>,
+    /// What goes before the program on its command line: the bundle's glibc loader and its
+    /// library path when the host's glibc cannot run the bundle (musl, NixOS, too old). The
+    /// program then sees the loader as /proc/self/exe; `D2MM_EXE` names the program itself.
+    pub wrap: Vec<String>,
+}
+
+impl Launch {
+    /// The command that starts `program` with `args` this way.
+    pub fn command<A: AsRef<std::ffi::OsStr>>(&self, program: &std::ffi::OsStr, args: impl IntoIterator<Item = A>) -> std::process::Command {
+        let mut cmd = match self.wrap.split_first() {
+            None => std::process::Command::new(program),
+            Some((loader, rest)) => {
+                let mut c = std::process::Command::new(loader);
+                c.args(rest).arg("--argv0").arg(program).arg(program);
+                c.env("D2MM_EXE", program);
+                c
+            }
+        };
+        cmd.args(args).envs(self.vars.iter().map(|(k, v)| (k, v)));
+        if let Some(cwd) = &self.cwd {
+            if let Ok(owd) = std::env::current_dir() {
+                cmd.env("D2MM_OWD", owd);
+            }
+            cmd.current_dir(cwd);
+        }
+        cmd
+    }
 }
 
 #[derive(Debug)]

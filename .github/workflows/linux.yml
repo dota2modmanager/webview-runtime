@@ -1,11 +1,13 @@
-# Builds the Linux engine on Ubuntu 22.04 and runs it on the distributions people use the app on.
-# Runs on its own (by hand, or when linux/ changes) and as the release's Linux step.
+# Builds the Linux engine on Ubuntu 22.04 and the static launcher, then runs both on the
+# distributions people use the app on: glibc ones on the host's glibc, musl ones and NixOS on the
+# bundle's own, each drawing a page on Xvfb. Runs on its own (by hand, or when the Linux parts
+# change) and as the release's Linux step.
 name: linux
 
 on:
   workflow_dispatch:
   push:
-    paths: ["linux/**", ".github/workflows/linux.yml"]
+    paths: ["linux/**", "src/**", "Cargo.*", ".github/workflows/linux.yml"]
   workflow_call:
     inputs:
       release_url_base:
@@ -27,28 +29,50 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: linux, path: dist/*, if-no-files-found: error }
 
+  launcher:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: static launcher (musl)
+        run: |
+          sudo apt-get install -y -qq musl-tools >/dev/null
+          rustup target add x86_64-unknown-linux-musl
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          mkdir -p out
+          cp target/x86_64-unknown-linux-musl/release/webview-runtime out/webview-runtime-linux-x64
+          file out/webview-runtime-linux-x64
+          file out/webview-runtime-linux-x64 | grep -q 'static' || { echo "not static" >&2; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with: { name: launcher, path: out/*, if-no-files-found: error }
+
   run-on:
-    needs: build
+    needs: [build, launcher]
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: Ubuntu 22.04, image: "ubuntu:22.04" }
-          - { name: Ubuntu 24.04, image: "ubuntu:24.04" }
-          - { name: Linux Mint 22, image: "linuxmintd/mint22-amd64" }
-          - { name: Debian 12, image: "debian:12" }
-          - { name: Debian 13, image: "debian:13" }
-          - { name: Kali, image: "kalilinux/kali-rolling" }
-          - { name: Arch, image: "archlinux:latest" }
-          - { name: Manjaro, image: "manjarolinux/base" }
-          - { name: Fedora, image: "fedora:latest", prep: "dnf -y -q install tar gzip findutils >/dev/null" }
-          - { name: openSUSE Tumbleweed, image: "opensuse/tumbleweed", prep: "zypper -n -q in tar gzip findutils >/dev/null" }
+          - { name: Ubuntu 22.04, image: "ubuntu:22.04", prep: "apt-get update -qq && apt-get install -y -qq xvfb" }
+          - { name: Ubuntu 24.04, image: "ubuntu:24.04", prep: "apt-get update -qq && apt-get install -y -qq xvfb" }
+          - { name: Linux Mint 22, image: "linuxmintd/mint22-amd64", prep: "apt-get update -qq && apt-get install -y -qq xvfb" }
+          - { name: Debian 12, image: "debian:12", prep: "apt-get update -qq && apt-get install -y -qq xvfb" }
+          - { name: Debian 13, image: "debian:13", prep: "apt-get update -qq && apt-get install -y -qq xvfb" }
+          - { name: Kali, image: "kalilinux/kali-rolling", prep: "apt-get update -qq && apt-get install -y -qq xvfb" }
+          - { name: Arch, image: "archlinux:latest", prep: "pacman -Sy --noconfirm --needed xorg-server-xvfb" }
+          - { name: Manjaro, image: "manjarolinux/base", prep: "pacman -Sy --noconfirm --needed xorg-server-xvfb" }
+          - { name: Fedora, image: "fedora:latest", prep: "dnf -y -q install tar gzip findutils xorg-x11-server-Xvfb" }
+          - { name: openSUSE Tumbleweed, image: "opensuse/tumbleweed", prep: "zypper -n -q in tar gzip findutils xorg-x11-server-Xvfb" }
+          - { name: Alpine (musl), image: "alpine:latest", prep: "apk add -q xvfb findutils tar" }
+          - { name: Void (musl), image: "ghcr.io/void-linux/void-musl-full:latest", prep: "xbps-install -Syu -y xbps && xbps-install -Sy -y xorg-server-xvfb findutils tar" }
+          - { name: Nix (no /lib64 loader, like NixOS), image: "nixos/nix:latest", prep: "nix-channel --update && nix-env -iA nixpkgs.xorg.xorgserver nixpkgs.gnutar nixpkgs.gzip nixpkgs.findutils" }
     name: run on ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { name: linux, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: launcher, path: dist }
       - run: |
-          docker run --rm -v "$PWD:/w" -w /w "${{ matrix.image }}" sh -c \
-            '${{ matrix.prep || 'true' }} && sh linux/smoke.sh dist/webkitgtk-linux-x64-*.tar.gz'
+          chmod +x dist/webview-runtime-linux-x64
+          docker run --rm -v "$PWD:/w" -w /w -e REQUIRE_SELFTEST=1 "${{ matrix.image }}" sh -c \
+            '${{ matrix.prep }} >/dev/null && sh linux/smoke.sh dist/webkitgtk-linux-x64-*.tar.gz dist/runtime-linux-x64.json dist/webview-runtime-linux-x64'

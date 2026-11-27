@@ -6,8 +6,13 @@
 # runs on, and glibc is the one thing taken from the host; 22.04's 2.35 covers Ubuntu 22.04 and
 # newer, Mint 21+, Debian 12+, Kali, Arch, Manjaro, EndeavourOS, Fedora 36+, openSUSE Tumbleweed
 # and Pop!_OS 22.04+. Ubuntu keeps WebKitGTK on its LTS releases at the current upstream version
-# (security updates), so the older base does not mean an older engine. musl distributions (Alpine,
-# Void musl) and NixOS without nix-ld have no /lib64/ld-linux-x86-64.so.2 and are not covered.
+# (security updates), so the older base does not mean an older engine.
+#
+# Hosts whose glibc cannot run it (musl: Alpine, Void musl; NixOS; glibc older than the floor) run
+# it on the glibc it carries in glibc/: the program starts through glibc/ld-linux-x86-64.so.2, and
+# every executable in the bundle is a small sh wrapper that does the same for itself when
+# D2MM_GLIBC_LOADER is set (src/store.rs linux_launch). WebKit starts its helper processes by path,
+# so the wrapper is what lets them load on a host without /lib64/ld-linux-x86-64.so.2.
 #
 #   docker run --rm -v "$PWD:/w" -w /w ubuntu:22.04 sh linux/build.sh dist
 #
@@ -39,12 +44,19 @@ apt-get install -y -qq --no-install-recommends \
   libgl1-mesa-dri libegl-mesa0 libglx-mesa0 libgbm1 \
   libgdk-pixbuf2.0-bin librsvg2-common libgtk-3-bin \
   gsettings-desktop-schemas shared-mime-info hicolor-icon-theme adwaita-icon-theme \
-  file binutils ca-certificates >/dev/null
+  fonts-dejavu-core fontconfig-config \
+  file binutils ca-certificates \
+  gcc libc6-dev pkg-config libwebkit2gtk-4.1-dev >/dev/null
 # Mesa's Gallium drivers moved into their own package in 24.04; on 22.04 they are in -dri
 apt-get install -y -qq --no-install-recommends mesa-libgallium >/dev/null 2>&1 || true
 
 VERSION=$(dpkg-query -W -f='${Version}' libwebkit2gtk-4.1-0 | sed 's/-.*//')
 echo "WebKitGTK $VERSION"
+
+# the self-test (linux/selftest.c): draws a page with this very WebKitGTK and checks its pixels
+mkdir -p "$STAGE/bin"
+# shellcheck disable=SC2046 # pkg-config's flags are separate words on purpose
+gcc -O2 -Wall -o "$STAGE/bin/wvr-selftest" "$(dirname "$0")/selftest.c" $(pkg-config --cflags --libs webkit2gtk-4.1)
 
 # --- the files the closure starts from ---------------------------------------------------
 copy() { # copy a file or folder from the system into the same place under the stage
@@ -62,7 +74,8 @@ copy /usr/$LIB/libwebkit2gtk-4.1.so.0* /usr/$LIB/libjavascriptcoregtk-4.1.so.0* 
   /usr/$LIB/dri /usr/$LIB/gbm \
   /usr/$LIB/libEGL_mesa.so.0* /usr/$LIB/libGLX_mesa.so.0* \
   /usr/share/glvnd /usr/share/glib-2.0 /usr/share/mime \
-  /usr/share/icons/hicolor /usr/share/icons/Adwaita /usr/share/X11/xkb
+  /usr/share/icons/hicolor /usr/share/icons/Adwaita /usr/share/X11/xkb \
+  /usr/share/fonts/truetype/dejavu
 
 # --- every library those files need, except glibc -----------------------------------------
 GLIBC='^(ld-linux-x86-64|libc|libm|libdl|libpthread|librt|libresolv|libutil|libanl|libnsl|libmvec|libBrokenLocale)\.so'
@@ -108,6 +121,48 @@ tool() { # tool NAME: the first copy found on PATH or in those folders
   return 1
 }
 
+# --- glibc of its own, for hosts that cannot run the bundle on theirs -----------------------------
+mkdir -p "$STAGE/glibc/locale"
+for so in ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libmvec.so.1 libpthread.so.0 libdl.so.2 librt.so.1 \
+  libresolv.so.2 libutil.so.1 libanl.so.1 libnsl.so.1 libBrokenLocale.so.1 libnss_files.so.2 libnss_dns.so.2; do
+  if [ -e "/usr/$LIB/$so" ]; then cp -L "/usr/$LIB/$so" "$STAGE/glibc/$so"; fi
+done
+[ -x "$STAGE/glibc/ld-linux-x86-64.so.2" ] || { echo "no loader" >&2; exit 1; }
+cp -a "/usr/$LIB/gconv" "$STAGE/glibc/gconv"
+cp -a /usr/lib/locale/C.utf8 "$STAGE/glibc/locale/C.utf8"
+
+# every executable becomes a wrapper that starts it through the bundle's loader when asked
+find "$STAGE" -type f ! -path "$STAGE/glibc/*" | while read -r f; do
+  file -b "$f" | grep -q 'interpreter /lib64/ld-linux-x86-64.so.2' || continue
+  mv "$f" "$f.real"
+  cat >"$f" <<'WRAP'
+#!/bin/sh
+# Starts the program beside this file (".real"), through the bundle's own glibc where the app
+# runs the bundle on it (webview-runtime: D2MM_GLIBC_LOADER), else on the host's.
+if [ -n "${D2MM_GLIBC_LOADER:-}" ]; then
+  exec "$D2MM_GLIBC_LOADER" --library-path "$D2MM_GLIBC_LIBRARY_PATH" --argv0 "$0" "$0.real" "$@"
+fi
+exec "$0.real" "$@"
+WRAP
+  chmod 755 "$f"
+done
+
+# fonts: the host's own configuration, and DejaVu for a host that has no fonts at all
+mkdir -p "$STAGE/etc/fonts"
+cat >"$STAGE/etc/fonts/fonts.conf" <<'FONTS'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig>
+  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+  <dir>/usr/share/fonts</dir>
+  <dir>/usr/local/share/fonts</dir>
+  <dir prefix="xdg">fonts</dir>
+  <dir>/run/current-system/sw/share/X11/fonts</dir>
+  <dir>@ROOT@/share/fonts</dir>
+  <cachedir prefix="xdg">fontconfig-d2mm</cachedir>
+</fontconfig>
+FONTS
+
 # --- caches with the bundle's own paths ---------------------------------------------------------
 GDK="$STAGE/$LIB/gdk-pixbuf-2.0/2.10.0"
 LD_LIBRARY_PATH="$STAGE/$LIB" GDK_PIXBUF_MODULEDIR="$GDK/loaders" \
@@ -125,7 +180,7 @@ fi
 update-mime-database "$STAGE/share/mime" >/dev/null 2>&1 || true
 
 printf '%s\n' "# files that name this folder as @ROOT@ (src/store.rs writes it in)" \
-  "$LIB/gdk-pixbuf-2.0/2.10.0/loaders.cache" >"$STAGE/fixups.txt"
+  "$LIB/gdk-pixbuf-2.0/2.10.0/loaders.cache" "etc/fonts/fonts.conf" >"$STAGE/fixups.txt"
 [ -f "$IM/immodules.cache" ] && echo "$LIB/gtk-3.0/3.0.0/immodules.cache" >>"$STAGE/fixups.txt"
 
 # --- licenses: everything shipped keeps its copyright files --------------------------------------
@@ -161,7 +216,8 @@ cat >"$OUT/runtime-linux-x64.json" <<EOF
   "sha256": "$SHA",
   "urls": ["${RELEASE_URL_BASE:-https://example.invalid}/$NAME.tar.gz"],
   "root": "webkit",
-  "check": "$LIB/libwebkit2gtk-4.1.so.0"
+  "check": "$LIB/libwebkit2gtk-4.1.so.0",
+  "glibc": "$FLOOR"
 }
 EOF
 echo "$OUT/$NAME.tar.gz $SIZE bytes"

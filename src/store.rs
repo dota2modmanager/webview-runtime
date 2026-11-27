@@ -131,13 +131,18 @@ fn grant_sandbox(dir: &Path) -> Result<(), Error> {
 }
 
 /// The environment of a Linux bundle (`linux/build.sh` lays it out). Everything comes from the
-/// bundle; only glibc, the display server and the person's fonts and settings come from the host.
-pub fn linux_launch(dir: &Path, software: bool) -> Launch {
+/// bundle; only the display server and the person's fonts and settings come from the host, and
+/// glibc too unless `own_glibc` ([`crate::system::needs_own_glibc`]).
+///
+/// With `own_glibc` the program runs through the bundle's loader (`Launch::wrap`), and the
+/// bundle's executables find it through `D2MM_GLIBC_LOADER` (build.sh's wrappers). The library
+/// path is then the loader's `--library-path`, not LD_LIBRARY_PATH: a host program started from
+/// the app (a musl `xdg-open`, Nix's tools) must not be pointed at glibc builds of its libraries.
+pub fn linux_launch(dir: &Path, software: bool, own_glibc: bool) -> Launch {
     let d = |rel: &str| dir.join(rel).display().to_string();
     let lib = "lib/x86_64-linux-gnu";
     let host_data = std::env::var("XDG_DATA_DIRS").ok().filter(|v| !v.is_empty());
-    let mut vars = vec![
-        ("LD_LIBRARY_PATH".into(), d(lib)),
+    let mut vars: Vec<(String, String)> = vec![
         ("GDK_PIXBUF_MODULE_FILE".into(), d(&format!("{lib}/gdk-pixbuf-2.0/2.10.0/loaders.cache"))),
         ("GIO_MODULE_DIR".into(), d(&format!("{lib}/gio/modules"))),
         ("GTK_PATH".into(), d(&format!("{lib}/gtk-3.0"))),
@@ -151,16 +156,32 @@ pub fn linux_launch(dir: &Path, software: bool) -> Launch {
         ("LIBGL_DRIVERS_PATH".into(), d(&format!("{lib}/dri"))),
         ("GBM_BACKENDS_PATH".into(), d(&format!("{lib}/gbm"))),
         ("__EGL_VENDOR_LIBRARY_DIRS".into(), d("share/glvnd/egl_vendor.d")),
+        // the host's own fonts.conf is included from it; the bundle adds DejaVu for hosts with none
+        ("FONTCONFIG_FILE".into(), d("etc/fonts/fonts.conf")),
         ("XDG_DATA_DIRS".into(), format!("{}:{}", d("share"), host_data.unwrap_or_else(|| "/usr/local/share:/usr/share".into()))),
         // a host's GPU path WebKit cannot use is the most common blank or black window
         ("WEBKIT_DISABLE_DMABUF_RENDERER".into(), "1".into()),
     ];
+    let mut wrap = Vec::new();
+    if own_glibc {
+        let libs = format!("{}:{}", d("glibc"), d(lib));
+        let loader = d("glibc/ld-linux-x86-64.so.2");
+        vars.push(("D2MM_GLIBC_LOADER".into(), loader.clone()));
+        vars.push(("D2MM_GLIBC_LIBRARY_PATH".into(), libs.clone()));
+        // iconv's converters and the one locale the bundle carries: the host's are musl's or Nix's
+        vars.push(("GCONV_PATH".into(), d("glibc/gconv")));
+        vars.push(("LOCPATH".into(), d("glibc/locale")));
+        vars.push(("LC_ALL".into(), "C.UTF-8".into()));
+        wrap = vec![loader, "--library-path".into(), libs];
+    } else {
+        vars.push(("LD_LIBRARY_PATH".into(), d(lib)));
+    }
     if software {
         vars.push(("LIBGL_ALWAYS_SOFTWARE".into(), "1".into()));
         vars.push(("WEBKIT_DISABLE_COMPOSITING_MODE".into(), "1".into()));
     }
     // libwebkit2gtk is patched to find its helper processes at ././lib/... (linux/build.sh)
-    Launch { vars, cwd: Some(dir.to_path_buf()) }
+    Launch { vars, cwd: Some(dir.to_path_buf()), wrap }
 }
 
 #[cfg(test)]
@@ -196,6 +217,7 @@ mod tests {
             urls: vec!["https://example.org/a.tar.gz".into()],
             root: "webkit".into(),
             check: "lib/x86_64-linux-gnu/libwebkit2gtk-4.1.so.0".into(),
+            glibc: "2.35".into(),
         }
     }
 
@@ -254,10 +276,22 @@ mod tests {
     #[test]
     fn software_rendering_is_added_only_when_asked() {
         let dir = Path::new("/home/u/.local/share/d2mm/webview-runtime/linux-x64-2.50.1");
-        let plain = linux_launch(dir, false);
+        let plain = linux_launch(dir, false, false);
         assert_eq!(plain.cwd.as_deref(), Some(dir));
+        assert!(plain.wrap.is_empty());
         assert!(plain.vars.iter().any(|(k, v)| k == "LD_LIBRARY_PATH" && v.ends_with("lib/x86_64-linux-gnu")));
         assert!(!plain.vars.iter().any(|(k, _)| k == "LIBGL_ALWAYS_SOFTWARE"));
-        assert!(linux_launch(dir, true).vars.iter().any(|(k, _)| k == "LIBGL_ALWAYS_SOFTWARE"));
+        assert!(linux_launch(dir, true, false).vars.iter().any(|(k, _)| k == "LIBGL_ALWAYS_SOFTWARE"));
+    }
+
+    #[test]
+    fn own_glibc_runs_through_the_bundle_s_loader_without_ld_library_path() {
+        let dir = Path::new("/home/u/.local/share/d2mm/webview-runtime/linux-x64-2.50.1");
+        let own = linux_launch(dir, false, true);
+        assert!(own.wrap[0].ends_with("ld-linux-x86-64.so.2"));
+        assert_eq!(own.wrap[1], "--library-path");
+        assert!(own.wrap[2].contains("glibc") && own.wrap[2].contains("lib/x86_64-linux-gnu"));
+        assert!(!own.vars.iter().any(|(k, _)| k == "LD_LIBRARY_PATH"), "host programs started from the app keep their libraries");
+        assert!(own.vars.iter().any(|(k, v)| k == "D2MM_GLIBC_LOADER" && *v == own.wrap[0]));
     }
 }
