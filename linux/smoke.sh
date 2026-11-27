@@ -64,12 +64,24 @@ printf '{"format":1,"runtimes":[%s]}\n' "$(cat "$ENTRY")" >"$BASE/manifest.json"
 "$LAUNCHER" status --base "$BASE/rt" --manifest "$BASE/manifest.json"
 
 # --- 4: a page drawn ------------------------------------------------------------------------------
+# The pixels alone are not enough: the snapshot is drawn without the screen's GL, so a bundle
+# whose GL cannot be found still passes it while an app's window stays black. libepoxy says so.
+selftest() {
+  out=$("$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json" "$@" 2>&1)
+  code=$?
+  echo "$out" | grep -v '^Fontconfig'
+  if echo "$out" | grep -q 'No provider of'; then
+    echo "no GL for WebKit: libepoxy found no provider" >&2
+    exit 1
+  fi
+  [ "$code" -eq 0 ] || exit "$code"
+}
 if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ "${SMOKE_XVFB:-0}" != 1 ]; then
   # a real desktop: draw on it
   export NO_AT_BRIDGE=1
   echo "drawing on the desktop's display (DISPLAY=${DISPLAY:-} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-})"
-  "$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json"
-  "$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json" --software
+  selftest
+  selftest --software
   echo "ok: $name"
   exit 0
 fi
@@ -87,6 +99,6 @@ trap 'kill $xvfb 2>/dev/null || true; rm -rf "$BASE"' EXIT
 i=0
 while [ ! -e /tmp/.X11-unix/X99 ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
 export DISPLAY=:99 NO_AT_BRIDGE=1
-"$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json"
-"$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json" --software
+selftest
+selftest --software
 echo "ok: $name"

@@ -45,7 +45,7 @@ apt-get install -y -qq --no-install-recommends \
   libgdk-pixbuf2.0-bin librsvg2-common libgtk-3-bin \
   gsettings-desktop-schemas shared-mime-info hicolor-icon-theme adwaita-icon-theme \
   fonts-dejavu-core fontconfig-config \
-  libayatana-appindicator3-1 \
+  libayatana-appindicator3-1 libgles2 libopengl0 \
   file binutils ca-certificates \
   gcc libc6-dev pkg-config libwebkit2gtk-4.1-dev >/dev/null
 # Mesa's Gallium drivers moved into their own package in 24.04; on 22.04 they are in -dri
@@ -84,6 +84,12 @@ copy /usr/$LIB/libwebkit2gtk-4.1.so.0* /usr/$LIB/libjavascriptcoregtk-4.1.so.0* 
 copy /usr/$LIB/libayatana-appindicator3.so.1* /usr/$LIB/libayatana-indicator3.so.7* \
   /usr/$LIB/libayatana-ido3-0.4.so.0* /usr/$LIB/libdbusmenu-glib.so.4* /usr/$LIB/libdbusmenu-gtk3.so.4*
 [ -e "$STAGE/$LIB/libayatana-appindicator3.so.1" ] || { echo "no libayatana-appindicator3" >&2; exit 1; }
+# also dlopened: libepoxy loads GLES and OpenGL by name when WebKit makes its first GL context.
+# Without them in the bundle it found none on X11 ("No provider of glTexParameteri") and Mod
+# Manager's window stayed black in Mint and EndeavourOS, while the self-test's snapshot, drawn
+# without the screen's GL, came out right.
+copy /usr/$LIB/libGLESv2.so.2* /usr/$LIB/libOpenGL.so.0*
+[ -e "$STAGE/$LIB/libGLESv2.so.2" ] || { echo "no libGLESv2" >&2; exit 1; }
 
 # --- every library those files need, except glibc -----------------------------------------
 GLIBC='^(ld-linux-x86-64|libc|libm|libdl|libpthread|librt|libresolv|libutil|libanl|libnsl|libmvec|libBrokenLocale)\.so'
