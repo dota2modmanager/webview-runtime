@@ -133,7 +133,8 @@ done
 
 # Debian and Ubuntu keep GTK's and GLib's helper tools out of PATH, in the libraries' folders
 tool() { # tool NAME: the first copy found on PATH or in those folders
-  for t in "$(command -v "$1" 2>/dev/null)" "/usr/$LIB/libgtk-3-0/$1" "/usr/$LIB/glib-2.0/$1" "/usr/lib/glib-2.0/$1"; do
+  # libgtk-3-0t64: 24.04 renamed the package (64-bit time_t) and the folder with it
+  for t in "$(command -v "$1" 2>/dev/null)" "/usr/$LIB/libgtk-3-0t64/$1" "/usr/$LIB/libgtk-3-0/$1"     "/usr/$LIB/glib-2.0/$1" "/usr/lib/glib-2.0/$1"; do
     if [ -n "$t" ] && [ -x "$t" ]; then echo "$t"; return 0; fi
   done
   echo "no $1" >&2
@@ -193,12 +194,16 @@ sed -i "s|$STAGE|@ROOT@|g" "$GDK/loaders.cache"
 
 IM="$STAGE/$LIB/gtk-3.0/3.0.0"
 if [ -d "$IM/immodules" ]; then
-  LD_LIBRARY_PATH="$STAGE/$LIB" "$(tool gtk-query-immodules-3.0)" "$IM"/immodules/*.so >"$IM/immodules.cache"
+  # a variable first: "$(tool ...)" as a command hides tool's failure behind "Permission denied"
+  QUERY_IM=$(tool gtk-query-immodules-3.0)
+  LD_LIBRARY_PATH="$STAGE/$LIB" "$QUERY_IM" "$IM"/immodules/*.so >"$IM/immodules.cache"
   sed -i "s|$STAGE|@ROOT@|g" "$IM/immodules.cache"
 fi
 
-"$(tool gio-querymodules)" "$STAGE/$LIB/gio/modules"
-"$(tool glib-compile-schemas)" "$STAGE/share/glib-2.0/schemas"
+QUERY_GIO=$(tool gio-querymodules)
+COMPILE_SCHEMAS=$(tool glib-compile-schemas)
+"$QUERY_GIO" "$STAGE/$LIB/gio/modules"
+"$COMPILE_SCHEMAS" "$STAGE/share/glib-2.0/schemas"
 update-mime-database "$STAGE/share/mime" >/dev/null 2>&1 || true
 
 printf '%s\n' "# files that name this folder as @ROOT@ (src/store.rs writes it in)" \

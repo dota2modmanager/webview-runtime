@@ -1,11 +1,12 @@
-# Serves D:\VM\share to the test VMs (VirtualBox NAT: the host is 10.0.2.2 from inside) and takes
-# their logs back: PUT /logs/<name> writes D:\VM\share\logs\<name>. Bound to 127.0.0.1 only.
+# Serves a folder (the argument, or the current one) to the test VMs and takes their logs back:
+# PUT /logs/<name> writes <folder>/logs/<name>. Bound to 127.0.0.1 only; VirtualBox 7 NAT reaches
+# it as 10.0.2.2 once the VM has --nat-localhostreachable1 on.
 import http.server
 import os
 import re
 import sys
 
-ROOT = r"D:\VM\share"
+ROOT = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
 LOGS = os.path.join(ROOT, "logs")
 os.makedirs(LOGS, exist_ok=True)
 
