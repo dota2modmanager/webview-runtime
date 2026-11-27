@@ -45,6 +45,7 @@ apt-get install -y -qq --no-install-recommends \
   libgdk-pixbuf2.0-bin librsvg2-common libgtk-3-bin \
   gsettings-desktop-schemas shared-mime-info hicolor-icon-theme adwaita-icon-theme \
   fonts-dejavu-core fontconfig-config \
+  libayatana-appindicator3-1 \
   file binutils ca-certificates \
   gcc libc6-dev pkg-config libwebkit2gtk-4.1-dev >/dev/null
 # Mesa's Gallium drivers moved into their own package in 24.04; on 22.04 they are in -dri
@@ -76,6 +77,13 @@ copy /usr/$LIB/libwebkit2gtk-4.1.so.0* /usr/$LIB/libjavascriptcoregtk-4.1.so.0* 
   /usr/share/glvnd /usr/share/glib-2.0 /usr/share/mime \
   /usr/share/icons/hicolor /usr/share/icons/Adwaita /usr/share/X11/xkb \
   /usr/share/fonts/truetype/dejavu
+# loaded with dlopen, so no ldd finds them: the tray icon of Tauri apps (libappindicator-sys).
+# The host's copy is built against the host's GLib, which may be newer than the bundle's (Arch:
+# libdbusmenu-glib wants g_once_init_leave_pointer, GLib 2.80), and Mod Manager 4.7.1 then panics
+# at start, so the bundle carries its own.
+copy /usr/$LIB/libayatana-appindicator3.so.1* /usr/$LIB/libayatana-indicator3.so.7* \
+  /usr/$LIB/libayatana-ido3-0.4.so.0* /usr/$LIB/libdbusmenu-glib.so.4* /usr/$LIB/libdbusmenu-gtk3.so.4*
+[ -e "$STAGE/$LIB/libayatana-appindicator3.so.1" ] || { echo "no libayatana-appindicator3" >&2; exit 1; }
 
 # --- every library those files need, except glibc -----------------------------------------
 GLIBC='^(ld-linux-x86-64|libc|libm|libdl|libpthread|librt|libresolv|libutil|libanl|libnsl|libmvec|libBrokenLocale)\.so'
@@ -151,13 +159,16 @@ WRAP
   chmod 755 "$f"
 done
 
-# fonts: the host's own configuration, and DejaVu for a host that has no fonts at all
-mkdir -p "$STAGE/etc/fonts"
+# fonts: the host's font folders with the bundle's own rules (the host's conf.d is written for its
+# own, often newer, fontconfig, and the bundle's 2.13 warns at every line it does not know), and
+# DejaVu for a host that has no fonts at all
+mkdir -p "$STAGE/etc/fonts/conf.d"
+for c in /etc/fonts/conf.d/*.conf; do cp -L "$c" "$STAGE/etc/fonts/conf.d/"; done
 cat >"$STAGE/etc/fonts/fonts.conf" <<'FONTS'
 <?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
 <fontconfig>
-  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+  <include ignore_missing="yes">@ROOT@/etc/fonts/conf.d</include>
   <dir>/usr/share/fonts</dir>
   <dir>/usr/local/share/fonts</dir>
   <dir prefix="xdg">fonts</dir>

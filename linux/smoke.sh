@@ -53,9 +53,12 @@ while read -r f; do
 done <"$LIST"
 [ "$bad" -eq 0 ] || exit 1
 echo "whole: $checked ELF files resolve inside the bundle"
+# the unpacked copy is 400 MB, and a live system keeps /tmp in memory
+rm -rf "$DIR" "$LIST"
 
 # --- 3: installed by the launcher, as the app's start would ----------------------------------
 BASE=$(mktemp -d)
+trap 'rm -rf "$BASE"' EXIT
 printf '{"format":1,"runtimes":[%s]}\n' "$(cat "$ENTRY")" >"$BASE/manifest.json"
 "$LAUNCHER" install --base "$BASE/rt" --manifest "$BASE/manifest.json" --from "$ARCHIVE" >/dev/null
 "$LAUNCHER" status --base "$BASE/rt" --manifest "$BASE/manifest.json"
@@ -80,7 +83,7 @@ if ! command -v Xvfb >/dev/null 2>&1; then
 fi
 Xvfb :99 -screen 0 640x480x24 -nolisten tcp >/dev/null 2>&1 &
 xvfb=$!
-trap 'kill $xvfb 2>/dev/null || true' EXIT
+trap 'kill $xvfb 2>/dev/null || true; rm -rf "$BASE"' EXIT
 i=0
 while [ ! -e /tmp/.X11-unix/X99 ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
 export DISPLAY=:99 NO_AT_BRIDGE=1
