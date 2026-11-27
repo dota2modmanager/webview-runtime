@@ -1,6 +1,6 @@
 [package]
 name = "webview-runtime"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.80"
 description = "A WebView engine Dota 2 Mod Manager puts in itself when the system one is missing or broken"
