@@ -86,6 +86,12 @@ dies in the GPU driver.
 * The renderer's sandbox can read only folders that grant `ALL APPLICATION PACKAGES`; the
   installer grants it on our folder (icacls), as Microsoft's notes on Fixed Version require.
 
+## The Windows installer
+
+`webview2-setup.exe` (`src/bin/webview2-setup.rs`) is what Dota 2 Mod Manager starts when its
+window cannot open: it puts the Fixed Version runtime in place in a window of the app's style and
+says where (`current.json`). How the app calls it and uses the folder: [INTEGRATION.md](INTEGRATION.md).
+
 ## Layout
 
 ```

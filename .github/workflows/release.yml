@@ -49,8 +49,13 @@ jobs:
           cargo run --locked --release -- install --base "$env:RUNNER_TEMP/wvr" --manifest dist/try.json --from $cab.FullName
           if ($LASTEXITCODE -ne 0) { throw "install failed" }
           Remove-Item dist/try.json
+      - name: the installer Mod Manager starts (INTEGRATION.md)
+        shell: pwsh
+        run: |
+          cargo build --locked --release --bin webview2-setup
+          Copy-Item target/release/webview2-setup.exe dist/
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: "dist/*.cab\ndist/*.json", if-no-files-found: error }
+        with: { name: windows, path: "dist/*.cab\ndist/*.json\ndist/*.exe", if-no-files-found: error }
 
   publish:
     needs: [test, linux, windows]
@@ -73,4 +78,4 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           gh release create "$TAG" --title "$TAG" --notes-file runtime.json \
-            runtime.json dist/*.cab dist/*.tar.gz dist/webview-runtime-linux-x64
+            runtime.json dist/*.cab dist/*.tar.gz dist/webview-runtime-linux-x64 dist/webview2-setup.exe
