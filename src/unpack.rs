@@ -25,26 +25,22 @@ fn tar_gz(archive: &Path, into: &Path) -> Result<(), Error> {
     tar.unpack(into).map_err(|e| Error::Unpack(e.to_string()))
 }
 
-/// Microsoft's cabinet, through the `expand` that every Windows since XP carries in System32.
-/// Called by full path, so a program named expand elsewhere on PATH is never the one run.
-#[cfg(windows)]
+/// Microsoft's cabinet, unpacked here (src/cabfile.rs), so it works on any platform and on
+/// Windows builds stripped of expand.exe. Names inside use `\`; each must be a plain relative path.
 fn cab(archive: &Path, into: &Path) -> Result<(), Error> {
-    let system = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into());
-    let out = std::process::Command::new(system.join("System32").join("expand.exe"))
-        .arg(archive)
-        .arg("-F:*")
-        .arg(into)
-        .output()?;
-    if !out.status.success() {
-        let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
-        return Err(Error::Unpack(format!("expand.exe exited with {}: {}", out.status, text.trim())));
-    }
-    Ok(())
+    crate::cabfile::extract(archive, into, safe_relative).map_err(|e| Error::Unpack(e.to_string()))
 }
 
-#[cfg(not(windows))]
-fn cab(_: &Path, _: &Path) -> Result<(), Error> {
-    Err(Error::Unpack("a cabinet is unpacked only on Windows".into()))
+/// `a\b/c.dll` as a relative path, or None when a part is empty, `.`, `..` or a drive.
+fn safe_relative(name: &str) -> Option<std::path::PathBuf> {
+    let mut out = std::path::PathBuf::new();
+    for part in name.split(['\\', '/']) {
+        if part.is_empty() || part == "." || part == ".." || part.contains(':') {
+            return None;
+        }
+        out.push(part);
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -81,6 +77,14 @@ mod tests {
         tar_gz_of(&[("lib/libwebkit2gtk-4.1.so.0", b"elf"), ("run", b"#!/bin/sh")], &archive);
         unpack(Archive::TarGz, &archive, &dir.join("out")).unwrap();
         assert_eq!(std::fs::read(dir.join("out/lib/libwebkit2gtk-4.1.so.0")).unwrap(), b"elf");
+    }
+
+    #[test]
+    fn cab_names_that_leave_the_folder_are_refused() {
+        assert!(safe_relative(r"Microsoft.WebView2\msedgewebview2.exe").is_some());
+        for bad in [r"..\x.dll", r"a\..\..\x", r"C:\Windows\x", r"\x", r"a\\b", ""] {
+            assert!(safe_relative(bad).is_none(), "{bad}");
+        }
     }
 
     #[test]

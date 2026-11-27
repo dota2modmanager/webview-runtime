@@ -78,7 +78,42 @@ pub fn install_from(base: &Path, runtime: &Runtime, archive: &Path) -> Result<In
     let mark = Mark { sha256: runtime.sha256.clone(), version: runtime.version.clone(), dir: dir.display().to_string() };
     std::fs::write(dir.join(MARK), serde_json::to_vec_pretty(&mark).expect("a mark serializes"))?;
     remove_older(base, runtime, &name);
-    find(base, runtime).ok_or_else(|| Error::Unpack("the unpacked engine was not found again".into()))
+    let installed = find(base, runtime).ok_or_else(|| Error::Unpack("the unpacked engine was not found again".into()))?;
+    write_current(base, &installed)?;
+    Ok(installed)
+}
+
+/// `<base>/current.json`: the engine a caller that does not link this crate should use (Dota 2
+/// Mod Manager reads it, INTEGRATION.md). Written last, through a temporary file.
+pub const CURRENT: &str = "current.json";
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Current {
+    pub platform: String,
+    pub version: String,
+    /// The engine folder: WEBVIEW2_BROWSER_EXECUTABLE_FOLDER on Windows.
+    pub folder: String,
+    /// The file that must be there, relative to `folder` (msedgewebview2.exe).
+    pub check: String,
+}
+
+fn write_current(base: &Path, installed: &Installed) -> Result<(), Error> {
+    let current = Current {
+        platform: installed.runtime.platform.name().into(),
+        version: installed.runtime.version.clone(),
+        folder: installed.dir.display().to_string(),
+        check: installed.runtime.check.clone(),
+    };
+    let tmp = base.join(format!("{CURRENT}.tmp"));
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&current).expect("a pointer serializes"))?;
+    std::fs::rename(&tmp, base.join(CURRENT))?;
+    Ok(())
+}
+
+/// The engine `<base>/current.json` names, if its file is really there.
+pub fn current(base: &Path) -> Option<Current> {
+    let c: Current = serde_json::from_slice(&std::fs::read(base.join(CURRENT)).ok()?).ok()?;
+    Path::new(&c.folder).join(&c.check).is_file().then_some(c)
 }
 
 fn remove(path: &Path) -> std::io::Result<()> {
@@ -117,22 +152,92 @@ fn write_root(dir: &Path) -> Result<(), Error> {
 }
 
 /// The renderer runs in an AppContainer sandbox, which may read only folders that grant
-/// "ALL APPLICATION PACKAGES" and "ALL RESTRICTED APPLICATION PACKAGES". Program Files does;
-/// the user's AppData does not, and WebView2's renderer then dies at once (Microsoft's notes on
-/// the Fixed Version runtime).
+/// "ALL APPLICATION PACKAGES" (S-1-15-2-1) and "ALL RESTRICTED APPLICATION PACKAGES"
+/// (S-1-15-2-2). Program Files does; the user's AppData does not, and WebView2's renderer then dies
+/// at once (Microsoft's notes on the Fixed Version runtime). Read and execute, inherited by every
+/// file and folder below, set through the Win32 API rather than icacls, which a stripped Windows
+/// may lack.
 #[cfg(windows)]
 fn grant_sandbox(dir: &Path) -> Result<(), Error> {
-    let system = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| "C:\\Windows".into());
-    for sid in ["*S-1-15-2-1:(OI)(CI)(RX)", "*S-1-15-2-2:(OI)(CI)(RX)"] {
-        let out = std::process::Command::new(system.join("System32").join("icacls.exe"))
-            .arg(dir)
-            .args(["/grant", sid, "/T", "/Q"])
-            .output()?;
-        if !out.status.success() {
-            return Err(Error::Unpack(format!("icacls {sid}: {}", String::from_utf8_lossy(&out.stdout).trim())));
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSidToSidW, GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W, GRANT_ACCESS,
+        NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, TRUSTEE_IS_SID, TRUSTEE_IS_WELL_KNOWN_GROUP, TRUSTEE_W,
+    };
+    use windows_sys::Win32::Security::{ACL, DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SUB_CONTAINERS_AND_OBJECTS_INHERIT};
+
+    // FILE_GENERIC_READ | FILE_GENERIC_EXECUTE, what icacls calls (RX)
+    const READ_EXECUTE: u32 = 0x0012_0089 | 0x0012_00A0;
+    let wide = |s: &std::ffi::OsStr| s.encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let fail = |what: &str, code: u32| Error::Unpack(format!("granting the sandbox read access: {what} failed ({code})"));
+
+    let path = wide(dir.as_os_str());
+    let mut sids: Vec<PSID> = Vec::new();
+    for s in ["S-1-15-2-1", "S-1-15-2-2"] {
+        let text = wide(std::ffi::OsStr::new(s));
+        let mut sid: PSID = std::ptr::null_mut();
+        // SAFETY: text is NUL-terminated; sid is freed with LocalFree below
+        if unsafe { ConvertStringSidToSidW(text.as_ptr(), &mut sid) } == 0 {
+            return Err(fail("ConvertStringSidToSidW", 0));
+        }
+        sids.push(sid);
+    }
+    let entries: Vec<EXPLICIT_ACCESS_W> = sids
+        .iter()
+        .map(|&sid| EXPLICIT_ACCESS_W {
+            grfAccessPermissions: READ_EXECUTE,
+            grfAccessMode: GRANT_ACCESS,
+            grfInheritance: SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+            Trustee: TRUSTEE_W {
+                pMultipleTrustee: std::ptr::null_mut(),
+                MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+                TrusteeForm: TRUSTEE_IS_SID,
+                TrusteeType: TRUSTEE_IS_WELL_KNOWN_GROUP,
+                ptstrName: sid as *mut u16,
+            },
+        })
+        .collect();
+
+    let mut old: *mut ACL = std::ptr::null_mut();
+    let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    let mut new: *mut ACL = std::ptr::null_mut();
+    // SAFETY: path is NUL-terminated; old points into sd, which is freed after use; new is
+    // allocated by SetEntriesInAclW and freed with LocalFree
+    let result = unsafe {
+        let rc = GetNamedSecurityInfoW(
+            path.as_ptr(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(), std::ptr::null_mut(), &mut old, std::ptr::null_mut(), &mut sd,
+        );
+        if rc != ERROR_SUCCESS {
+            Err(fail("GetNamedSecurityInfoW", rc))
+        } else {
+            let rc = SetEntriesInAclW(entries.len() as u32, entries.as_ptr(), old, &mut new);
+            if rc != ERROR_SUCCESS {
+                Err(fail("SetEntriesInAclW", rc))
+            } else {
+                // a folder's new inheritable entries reach the files already in it
+                let rc = SetNamedSecurityInfoW(
+                    path.as_ptr(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(), std::ptr::null_mut(), new, std::ptr::null(),
+                );
+                if rc != ERROR_SUCCESS { Err(fail("SetNamedSecurityInfoW", rc)) } else { Ok(()) }
+            }
+        }
+    };
+    // SAFETY: each was allocated by the API that handed it out, and is freed once
+    unsafe {
+        if !new.is_null() {
+            LocalFree(new as _);
+        }
+        if !sd.is_null() {
+            LocalFree(sd as _);
+        }
+        for sid in sids {
+            LocalFree(sid as _);
         }
     }
-    Ok(())
+    result
 }
 
 /// The environment of a Linux bundle (`linux/build.sh` lays it out). Everything comes from the
@@ -246,6 +351,8 @@ mod tests {
         assert!(!base.join("linux-x64-2.48.0").exists());
         assert!(!base.join(".part-linux-x64-2.50.1").exists());
         assert_eq!(find(&base, &rt), Some(got.clone()));
+        let c = current(&base).expect("current.json names the engine");
+        assert_eq!((c.version.as_str(), c.folder), ("2.50.1", got.dir.display().to_string()));
         // the same base spelled another way finds it too
         let respelled = base.join(".").join("..").join(base.file_name().unwrap());
         assert!(find(&respelled, &rt).is_some());

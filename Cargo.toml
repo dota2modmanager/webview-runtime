@@ -14,6 +14,11 @@ path = "src/lib.rs"
 name = "webview-runtime"
 path = "src/bin/webview-runtime.rs"
 
+# The Windows installer Dota 2 Mod Manager starts when WebView2 is missing or broken (INTEGRATION.md)
+[[bin]]
+name = "webview2-setup"
+path = "src/bin/webview2-setup.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,15 +27,31 @@ hex = "0.4"
 flate2 = "1"
 tar = "0.4"
 
-# Windows: the system's certificate store. Linux: Mozilla's roots built in, so the static launcher
-# (x86_64-unknown-linux-musl) needs neither OpenSSL nor the host's certificate files, which
-# Alpine and NixOS keep in places of their own.
-[target.'cfg(windows)'.dependencies]
-ureq = { version = "3", default-features = false, features = ["native-tls"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Registry"] }
-
-[target.'cfg(not(windows))'.dependencies]
+# TLS with Mozilla's roots built in, on every platform: the Linux launcher is static (musl) and
+# needs neither OpenSSL nor the host's certificate files, and the Windows installer runs on
+# "debloated" Windows builds whose certificate store and root updates are often cut out. What is
+# downloaded is pinned by SHA-256 anyway; TLS only keeps the download private.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+# Microsoft's cab is unpacked here (src/cabfile.rs) rather than by expand.exe, which a stripped
+# Windows may lack: MSZIP is raw deflate
+miniz_oxide = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Controls",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Gdi",
+    "Win32_Globalization",
+    "Win32_UI_HiDpi",
+    "Win32_Graphics_Dwm",
+] }
 
 [profile.release]
 opt-level = "s"
@@ -38,6 +59,10 @@ lto = true
 strip = true
 
 # examples/selftest-win.rs: a WebView2 window the way Tauri makes one
+[dev-dependencies]
+# writes the cabinets src/cabfile.rs's tests read
+cab = "0.6"
+
 [target.'cfg(windows)'.dev-dependencies]
 wry = "0.57"
 tao = "0.37"

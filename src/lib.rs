@@ -20,6 +20,7 @@
 //! [`choose`] says which engine a start should use, [`install`] fetches the app's own, [`env_for`]
 //! is what to start the window with, and [`Health`] notices a start that never reached its page.
 
+pub mod cabfile;
 pub mod fetch;
 pub mod health;
 pub mod manifest;
@@ -182,6 +183,7 @@ pub enum Error {
     Download(String),
     Mismatch { what: &'static str, want: String, got: String },
     Unpack(String),
+    Cancelled,
     Io(std::io::Error),
 }
 
@@ -193,6 +195,7 @@ impl std::fmt::Display for Error {
             Error::Download(e) => write!(f, "download failed: {e}"),
             Error::Mismatch { what, want, got } => write!(f, "{what} differs: expected {want}, got {got}"),
             Error::Unpack(e) => write!(f, "unpacking failed: {e}"),
+            Error::Cancelled => write!(f, "cancelled"),
             Error::Io(e) => write!(f, "{e}"),
         }
     }

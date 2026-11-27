@@ -7,6 +7,9 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
+/// Set from another thread (the installer's Cancel button) to stop a download at the next block.
+pub static CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 use crate::{Error, Runtime};
 
 /// Copies `from` into `to`, refusing anything longer than `size` and checking length and SHA-256
@@ -22,6 +25,9 @@ pub fn copy_checked(
     let mut done = 0u64;
     let mut buf = vec![0u8; 1 << 16];
     loop {
+        if CANCEL.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Cancelled);
+        }
         let n = from.read(&mut buf).map_err(|e| Error::Download(e.to_string()))?;
         if n == 0 {
             break;
@@ -57,6 +63,10 @@ pub fn download(runtime: &Runtime, dest: &Path, progress: &mut dyn FnMut(u64, u6
     for url in &runtime.urls {
         match download_one(url, runtime, dest, progress) {
             Ok(()) => return Ok(()),
+            Err(Error::Cancelled) => {
+                let _ = std::fs::remove_file(dest);
+                return Err(Error::Cancelled);
+            }
             Err(e) => {
                 let _ = std::fs::remove_file(dest);
                 last = Error::Download(format!("{url}: {e}"));
