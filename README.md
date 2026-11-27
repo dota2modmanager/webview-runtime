@@ -7,7 +7,7 @@ and used only when the system has none, or the last start never got its window u
 | | Windows | Linux |
 |---|---|---|
 | System engine | Microsoft Edge WebView2 (Evergreen), shared, updated by EdgeUpdate | WebKitGTK 4.1 from the distribution, or the AppImage's copy mixed with the host's libraries |
-| Ours | WebView2 **Fixed Version** runtime, Microsoft's own signed files, unchanged | WebKitGTK 4.1 **with its whole library stack**, Mesa included, built on Ubuntu 24.04 |
+| Ours | WebView2 **Fixed Version** runtime, Microsoft's own signed files, unchanged | WebKitGTK 4.1 **with its whole library stack**, Mesa included, built on Ubuntu 22.04 |
 | Where it goes | `%LOCALAPPDATA%\dota2-mod-manager\webview-runtime\windows-x64-<version>` | `~/.local/share/dota2-mod-manager/webview-runtime/linux-x64-<version>` |
 | Size | about 180 MB packed | to be measured on the first CI build |
 
@@ -33,12 +33,31 @@ GTK on rolling distributions (#761, #797), and a distribution without WebKitGTK 
 the app at all. Ours is one consistent set:
 
 * WebKitGTK, GTK, GLib, GStreamer, ICU and **Mesa**, all from the same base system; only glibc
-  and the display server (X11 or Wayland) come from the host;
+  and the display server (X11 or Wayland) come from the host, so it does not matter which
+  distribution, package manager or library versions the host has;
 * the helper processes (`WebKitWebProcess`, `WebKitNetworkProcess`) are found inside the bundle
   (see `linux/build.sh` on how);
 * it starts with the DMA-BUF renderer off, and after two failed starts on it, with software
   rendering (`LIBGL_ALWAYS_SOFTWARE`, compositing off), which works on any machine, only slower;
 * NVIDIA's proprietary driver is not in it: on such a machine ours draws with Mesa, in software.
+
+### Which distributions
+
+glibc is the only library taken from the host, so the bundle runs wherever glibc is at least
+the build base's (Ubuntu 22.04: 2.35; `share/doc/GLIBC.txt` in the bundle says the exact floor,
+`linux/smoke.sh` refuses an older host).
+
+| Runs | Checked in CI (`.github/workflows/linux.yml`) |
+|---|---|
+| Ubuntu 22.04+, Linux Mint 21+, Pop!_OS 22.04+, Zorin 17+ | Ubuntu 22.04, Ubuntu 24.04, Linux Mint 22 |
+| Debian 12+, Kali, MX Linux 23+ | Debian 12, Debian 13, Kali rolling |
+| Arch, Manjaro, EndeavourOS, CachyOS, Garuda | Arch, Manjaro |
+| Fedora 36+, openSUSE Tumbleweed | Fedora, openSUSE Tumbleweed |
+
+Not covered: musl distributions (Alpine, Void musl) and NixOS without nix-ld, which have no
+`/lib64/ld-linux-x86-64.so.2`. The check runs the bundle in each distribution's container: every
+library resolves inside the bundle, nothing but glibc comes from the host, and the helper
+processes load. It does not draw a window; that needs a display and a GPU, so it is checked by hand.
 
 ## When the app switches
 

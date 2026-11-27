@@ -23,22 +23,9 @@ jobs:
       - run: cargo test --locked
 
   linux:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: build on the AppImage's base
-        run: |
-          docker run --rm -v "$PWD:/w" -w /w \
-            -e RELEASE_URL_BASE="https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}" \
-            ubuntu:24.04 sh linux/build.sh dist
-      - name: run on other distributions
-        run: |
-          smoke='sh linux/smoke.sh dist/webkitgtk-linux-x64-*.tar.gz'
-          docker run --rm -v "$PWD:/w" -w /w fedora:41 sh -c "dnf -y -q install tar gzip findutils >/dev/null && $smoke"
-          docker run --rm -v "$PWD:/w" -w /w archlinux:latest sh -c "$smoke"
-          docker run --rm -v "$PWD:/w" -w /w debian:trixie sh -c "$smoke"
-      - uses: actions/upload-artifact@v4
-        with: { name: linux, path: dist/*, if-no-files-found: error }
+    uses: ./.github/workflows/linux.yml
+    with:
+      release_url_base: https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}
 
   windows:
     runs-on: windows-2025

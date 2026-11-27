@@ -2,10 +2,14 @@
 # Builds the Linux engine: WebKitGTK 4.1 and everything it links, as one folder that runs on any
 # x86-64 distribution with glibc at least as new as the base image's.
 #
-# Run as root in a clean ubuntu:24.04 container (the same base as the app's AppImage, so the
-# glibc floor stays 2.39):
+# Run as root in a clean ubuntu:22.04 container. The base decides the oldest glibc the bundle
+# runs on, and glibc is the one thing taken from the host; 22.04's 2.35 covers Ubuntu 22.04 and
+# newer, Mint 21+, Debian 12+, Kali, Arch, Manjaro, EndeavourOS, Fedora 36+, openSUSE Tumbleweed
+# and Pop!_OS 22.04+. Ubuntu keeps WebKitGTK on its LTS releases at the current upstream version
+# (security updates), so the older base does not mean an older engine. musl distributions (Alpine,
+# Void musl) and NixOS without nix-ld have no /lib64/ld-linux-x86-64.so.2 and are not covered.
 #
-#   docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 sh linux/build.sh dist
+#   docker run --rm -v "$PWD:/w" -w /w ubuntu:22.04 sh linux/build.sh dist
 #
 # What goes in, and why it differs from the AppImage's copy:
 #   * the whole closure of WebKitGTK, its helper processes, GTK's and GDK's modules, GIO's
@@ -32,10 +36,12 @@ apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
   libwebkit2gtk-4.1-0 \
   gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-gl \
-  libgl1-mesa-dri libegl-mesa0 libglx-mesa0 libgbm1 mesa-libgallium \
+  libgl1-mesa-dri libegl-mesa0 libglx-mesa0 libgbm1 \
   libgdk-pixbuf2.0-bin librsvg2-common libgtk-3-bin \
   gsettings-desktop-schemas shared-mime-info hicolor-icon-theme adwaita-icon-theme \
   file binutils ca-certificates >/dev/null
+# Mesa's Gallium drivers moved into their own package in 24.04; on 22.04 they are in -dri
+apt-get install -y -qq --no-install-recommends mesa-libgallium >/dev/null 2>&1 || true
 
 VERSION=$(dpkg-query -W -f='${Version}' libwebkit2gtk-4.1-0 | sed 's/-.*//')
 echo "WebKitGTK $VERSION"
@@ -117,10 +123,19 @@ printf '%s\n' "# files that name this folder as @ROOT@ (src/store.rs writes it i
 mkdir -p "$STAGE/share/doc"
 for so in "$STAGE/$LIB"/*.so*; do
   pkg=$(dpkg -S "$(basename "$so")" 2>/dev/null | head -1 | cut -d: -f1) || continue
-  [ -n "$pkg" ] && [ -f "/usr/share/doc/$pkg/copyright" ] && mkdir -p "$STAGE/share/doc/$pkg" &&
+  if [ -n "$pkg" ] && [ -f "/usr/share/doc/$pkg/copyright" ]; then
+    mkdir -p "$STAGE/share/doc/$pkg"
     cp "/usr/share/doc/$pkg/copyright" "$STAGE/share/doc/$pkg/"
+  fi
 done
 dpkg-query -W -f='${Package} ${Version}\n' >"$STAGE/share/doc/PACKAGES.txt"
+
+# --- the oldest glibc it runs on: the newest GLIBC_ symbol version anything in it asks for -----
+FLOOR=$(find "$STAGE" -type f | while read -r f; do
+  if file -b "$f" | grep -q '^ELF 64-bit'; then objdump -T "$f" 2>/dev/null; fi
+done | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+echo "$FLOOR" >"$STAGE/share/doc/GLIBC.txt"
+echo "needs glibc $FLOOR or newer"
 
 # --- the archive and its entry -------------------------------------------------------------------
 NAME="webkitgtk-linux-x64-$VERSION"

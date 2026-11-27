@@ -1,0 +1,54 @@
+# Builds the Linux engine on Ubuntu 22.04 and runs it on the distributions people use the app on.
+# Runs on its own (by hand, or when linux/ changes) and as the release's Linux step.
+name: linux
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ["linux/**", ".github/workflows/linux.yml"]
+  workflow_call:
+    inputs:
+      release_url_base:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: build on Ubuntu 22.04
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w -e RELEASE_URL_BASE="${{ inputs.release_url_base }}" \
+            ubuntu:22.04 sh linux/build.sh dist
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: dist/*, if-no-files-found: error }
+
+  run-on:
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Ubuntu 22.04, image: "ubuntu:22.04" }
+          - { name: Ubuntu 24.04, image: "ubuntu:24.04" }
+          - { name: Linux Mint 22, image: "linuxmintd/mint22-amd64" }
+          - { name: Debian 12, image: "debian:12" }
+          - { name: Debian 13, image: "debian:13" }
+          - { name: Kali, image: "kalilinux/kali-rolling" }
+          - { name: Arch, image: "archlinux:latest" }
+          - { name: Manjaro, image: "manjarolinux/base" }
+          - { name: Fedora, image: "fedora:latest", prep: "dnf -y -q install tar gzip findutils >/dev/null" }
+          - { name: openSUSE Tumbleweed, image: "opensuse/tumbleweed", prep: "zypper -n -q in tar gzip findutils >/dev/null" }
+    name: run on ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: linux, path: dist }
+      - run: |
+          docker run --rm -v "$PWD:/w" -w /w "${{ matrix.image }}" sh -c \
+            '${{ matrix.prep || 'true' }} && sh linux/smoke.sh dist/webkitgtk-linux-x64-*.tar.gz'
