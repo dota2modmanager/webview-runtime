@@ -99,6 +99,15 @@ for f in "$STAGE/$LIB"/libwebkit2gtk-4.1.so.0.*; do
   sed -i "s|/usr/$LIB/webkit2gtk-4.1|././$LIB/webkit2gtk-4.1|g" "$f"
 done
 
+# Debian and Ubuntu keep GTK's and GLib's helper tools out of PATH, in the libraries' folders
+tool() { # tool NAME: the first copy found on PATH or in those folders
+  for t in "$(command -v "$1" 2>/dev/null)" "/usr/$LIB/libgtk-3-0/$1" "/usr/$LIB/glib-2.0/$1" "/usr/lib/glib-2.0/$1"; do
+    if [ -n "$t" ] && [ -x "$t" ]; then echo "$t"; return 0; fi
+  done
+  echo "no $1" >&2
+  return 1
+}
+
 # --- caches with the bundle's own paths ---------------------------------------------------------
 GDK="$STAGE/$LIB/gdk-pixbuf-2.0/2.10.0"
 LD_LIBRARY_PATH="$STAGE/$LIB" GDK_PIXBUF_MODULEDIR="$GDK/loaders" \
@@ -107,12 +116,12 @@ sed -i "s|$STAGE|@ROOT@|g" "$GDK/loaders.cache"
 
 IM="$STAGE/$LIB/gtk-3.0/3.0.0"
 if [ -d "$IM/immodules" ]; then
-  LD_LIBRARY_PATH="$STAGE/$LIB" gtk-query-immodules-3.0 "$IM"/immodules/*.so >"$IM/immodules.cache"
+  LD_LIBRARY_PATH="$STAGE/$LIB" "$(tool gtk-query-immodules-3.0)" "$IM"/immodules/*.so >"$IM/immodules.cache"
   sed -i "s|$STAGE|@ROOT@|g" "$IM/immodules.cache"
 fi
 
-gio-querymodules "$STAGE/$LIB/gio/modules" 2>/dev/null || true
-glib-compile-schemas "$STAGE/share/glib-2.0/schemas"
+"$(tool gio-querymodules)" "$STAGE/$LIB/gio/modules"
+"$(tool glib-compile-schemas)" "$STAGE/share/glib-2.0/schemas"
 update-mime-database "$STAGE/share/mime" >/dev/null 2>&1 || true
 
 printf '%s\n' "# files that name this folder as @ROOT@ (src/store.rs writes it in)" \
