@@ -6,6 +6,7 @@ rust-version = "1.80"
 description = "A WebView engine Dota 2 Mod Manager puts in itself when the system one is missing or broken"
 license = "MIT"
 publish = false
+default-run = "webview-runtime"
 
 [lib]
 path = "src/lib.rs"

@@ -46,7 +46,7 @@ jobs:
           $entry = Get-Content dist/runtime-windows-x64.json -Raw | ConvertFrom-Json
           @{ format = 1; runtimes = @($entry) } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 dist/try.json
           $cab = Get-ChildItem dist/*.cab | Select-Object -First 1
-          cargo run --locked --release -- install --base "$env:RUNNER_TEMP/wvr" --manifest dist/try.json --from $cab.FullName
+          cargo run --locked --release --bin webview-runtime -- install --base "$env:RUNNER_TEMP/wvr" --manifest dist/try.json --from $cab.FullName
           if ($LASTEXITCODE -ne 0) { throw "install failed" }
           Remove-Item dist/try.json
       - name: the installer Mod Manager starts (INTEGRATION.md)
