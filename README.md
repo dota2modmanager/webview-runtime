@@ -7,9 +7,9 @@ and used only when the system has none, or the last start never got its window u
 | | Windows | Linux |
 |---|---|---|
 | System engine | Microsoft Edge WebView2 (Evergreen), shared, updated by EdgeUpdate | WebKitGTK 4.1 from the distribution, or the AppImage's copy mixed with the host's libraries |
-| Ours | WebView2 **Fixed Version** runtime, Microsoft's own signed files, unchanged | WebKitGTK 4.1 **with its whole library stack**, Mesa included, built on Ubuntu 22.04 |
+| Ours | WebView2 **Fixed Version** runtime, Microsoft's own signed files, unchanged | WebKitGTK 4.1 **with its whole library stack**, Mesa and glibc included, built on Ubuntu 24.04 |
 | Where it goes | `%LOCALAPPDATA%\dota2-mod-manager\webview-runtime\windows-x64-<version>` | `~/.local/share/dota2-mod-manager/webview-runtime/linux-x64-<version>` |
-| Size | 438 MB packed (158.0.4370.45) | 416 MB unpacked, 3607 files (CI, 2026-11-27); Adwaita icons and all Mesa drivers are most of it |
+| Size | 438 MB packed (158.0.4370.45) | about 160 MB packed, 420 MB unpacked; Adwaita icons and Mesa's drivers are most of it |
 
 ## How it differs from the system's engine
 
@@ -43,21 +43,24 @@ the app at all. Ours is one consistent set:
 
 ### Which distributions
 
-glibc is the only library taken from the host, so the bundle runs wherever glibc is at least
-the build base's (Ubuntu 22.04: 2.35; `share/doc/GLIBC.txt` in the bundle says the exact floor,
-`linux/smoke.sh` refuses an older host).
+The bundle carries glibc too. On a host whose glibc is at least the build base's (Ubuntu 24.04:
+2.39, written in `runtime.json` and `share/doc/GLIBC.txt`) it runs on the host's glibc; on any
+other x86-64 Linux - an older glibc, musl, NixOS - it runs on its own, started through its own
+loader, and every executable in it is a small wrapper that does the same for itself, so WebKit's
+helper processes load too. Only the display server (X11 or Wayland) and the fonts come from the
+host.
 
-| Runs | Checked in CI (`.github/workflows/linux.yml`) |
-|---|---|
-| Ubuntu 22.04+, Linux Mint 21+, Pop!_OS 22.04+, Zorin 17+ | Ubuntu 22.04, Ubuntu 24.04, Linux Mint 22 |
-| Debian 12+, Kali, MX Linux 23+ | Debian 12, Debian 13, Kali rolling |
-| Arch, Manjaro, EndeavourOS, CachyOS, Garuda | Arch, Manjaro |
-| Fedora 36+, openSUSE Tumbleweed | Fedora, openSUSE Tumbleweed |
+| Host | glibc | Checked |
+|---|---|---|
+| Ubuntu 24.04+, Mint 22+, Debian 13, Kali, Arch, Manjaro, EndeavourOS, Fedora 40+, Tumbleweed | the host's | CI containers with Xvfb; Ubuntu 24.04.5, Mint 22.3 and EndeavourOS desktops in VMs |
+| Ubuntu 22.04, Mint 21, Debian 12, older | the bundle's | CI containers with Xvfb |
+| Alpine, Void musl, NixOS and Nix hosts | the bundle's | CI containers with Xvfb |
 
-Not covered: musl distributions (Alpine, Void musl) and NixOS without nix-ld, which have no
-`/lib64/ld-linux-x86-64.so.2`. The check runs the bundle in each distribution's container: every
-library resolves inside the bundle, nothing but glibc comes from the host, and the helper
-processes load. It does not draw a window; that needs a display and a GPU, so it is checked by hand.
+The CI check (`linux/smoke.sh`, `.github/workflows/linux.yml`) unpacks the bundle in each
+distribution's container, checks that every library resolves inside it, installs it with the
+static launcher, and draws a page with `wvr-selftest` on Xvfb: the page's script must turn it
+green, and libepoxy must find GL. `linux/vm` holds the scripts that ran the same check on the VMs'
+own desktops and then started Dota 2 Mod Manager 4.7.1 on the bundle.
 
 ## When the app switches
 

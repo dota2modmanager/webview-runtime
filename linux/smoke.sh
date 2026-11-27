@@ -67,8 +67,9 @@ printf '{"format":1,"runtimes":[%s]}\n' "$(cat "$ENTRY")" >"$BASE/manifest.json"
 # The pixels alone are not enough: the snapshot is drawn without the screen's GL, so a bundle
 # whose GL cannot be found still passes it while an app's window stays black. libepoxy says so.
 selftest() {
-  out=$("$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json" "$@" 2>&1)
-  code=$?
+  # under set -e a failing $(...) would end the script before saying why
+  code=0
+  out=$("$LAUNCHER" selftest --base "$BASE/rt" --manifest "$BASE/manifest.json" "$@" 2>&1) || code=$?
   echo "$out" | grep -v '^Fontconfig'
   if echo "$out" | grep -q 'No provider of'; then
     echo "no GL for WebKit: libepoxy found no provider" >&2

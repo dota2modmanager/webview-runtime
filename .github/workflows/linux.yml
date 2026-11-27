@@ -1,4 +1,4 @@
-# Builds the Linux engine on Ubuntu 22.04 and the static launcher, then runs both on the
+# Builds the Linux engine on Ubuntu 24.04 and the static launcher, then runs both on the
 # distributions people use the app on: glibc ones on the host's glibc, musl ones and NixOS on the
 # bundle's own, each drawing a page on Xvfb. Runs on its own (by hand, or when the Linux parts
 # change) and as the release's Linux step.
@@ -22,10 +22,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: build on Ubuntu 22.04
+      - name: build on Ubuntu 24.04
         run: |
           docker run --rm -v "$PWD:/w" -w /w -e RELEASE_URL_BASE="${{ inputs.release_url_base }}" \
-            ubuntu:22.04 sh linux/build.sh dist
+            ubuntu:24.04 sh linux/build.sh dist
       - uses: actions/upload-artifact@v4
         with: { name: linux, path: dist/*, if-no-files-found: error }
 

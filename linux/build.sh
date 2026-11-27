@@ -2,11 +2,12 @@
 # Builds the Linux engine: WebKitGTK 4.1 and everything it links, as one folder that runs on any
 # x86-64 distribution with glibc at least as new as the base image's.
 #
-# Run as root in a clean ubuntu:22.04 container. The base decides the oldest glibc the bundle
-# runs on, and glibc is the one thing taken from the host; 22.04's 2.35 covers Ubuntu 22.04 and
-# newer, Mint 21+, Debian 12+, Kali, Arch, Manjaro, EndeavourOS, Fedora 36+, openSUSE Tumbleweed
-# and Pop!_OS 22.04+. Ubuntu keeps WebKitGTK on its LTS releases at the current upstream version
-# (security updates), so the older base does not mean an older engine.
+# Run as root in a clean ubuntu:24.04 container: the stack Linux Mint 22 and Ubuntu 24.04 run on
+# themselves (WebKitGTK 2.50, Mesa 25). The 22.04 base this started on had Mesa 23.2, and Dota 2
+# Mod Manager crashed in WebKit's GL setup on Mint 22.3 in a VM, where the host's own 24.04 stack
+# drew (2026-11-27). The base decides the oldest glibc the bundle runs on with the host's loader,
+# 2.39: Ubuntu 24.04+, Mint 22+, Debian 13, Kali, Arch, Manjaro, EndeavourOS, Fedora 40+,
+# openSUSE Tumbleweed. Older hosts (Ubuntu 22.04, Debian 12, Mint 21) run it on its own glibc.
 #
 # Hosts whose glibc cannot run it (musl: Alpine, Void musl; NixOS; glibc older than the floor) run
 # it on the glibc it carries in glibc/: the program starts through glibc/ld-linux-x86-64.so.2, and
@@ -14,7 +15,7 @@
 # D2MM_GLIBC_LOADER is set (src/store.rs linux_launch). WebKit starts its helper processes by path,
 # so the wrapper is what lets them load on a host without /lib64/ld-linux-x86-64.so.2.
 #
-#   docker run --rm -v "$PWD:/w" -w /w ubuntu:22.04 sh linux/build.sh dist
+#   docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 sh linux/build.sh dist
 #
 # What goes in, and why it differs from the AppImage's copy:
 #   * the whole closure of WebKitGTK, its helper processes, GTK's and GDK's modules, GIO's
@@ -48,7 +49,7 @@ apt-get install -y -qq --no-install-recommends \
   libayatana-appindicator3-1 libgles2 libopengl0 \
   file binutils ca-certificates \
   gcc libc6-dev pkg-config libwebkit2gtk-4.1-dev >/dev/null
-# Mesa's Gallium drivers moved into their own package in 24.04; on 22.04 they are in -dri
+# Mesa's Gallium drivers are their own package since 24.04 (in -dri before)
 apt-get install -y -qq --no-install-recommends mesa-libgallium >/dev/null 2>&1 || true
 
 VERSION=$(dpkg-query -W -f='${Version}' libwebkit2gtk-4.1-0 | sed 's/-.*//')
