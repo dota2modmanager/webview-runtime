@@ -34,6 +34,9 @@ if ($Url -notmatch '^https://[^/]*\.microsoft\.com/.*/Microsoft\.WebView2\.Fixed
 }
 $version = $Matches[1]
 $name = "Microsoft.WebView2.FixedVersionRuntime.$version.x64"
+# every path below is a full one: .NET calls (WriteAllText) resolve a relative path against the
+# process, not against PowerShell's current folder
+$Out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Out)
 New-Item -ItemType Directory -Force $Out | Out-Null
 $cab = Join-Path $Out "$name.cab"
 
@@ -53,12 +56,13 @@ if (-not (Test-Path (Join-Path $engine "msedgewebview2.exe"))) { throw "$name\ms
 
 # Microsoft signs everything but Widevine, Google's DRM module, which it ships as Google signed it
 # (seen in 158.0.4370.45). Google's signature counts only inside WidevineCdm\.
-$widevine = Join-Path $engine "WidevineCdm"
+# full path: -Out may be relative ("dist" in CI) while FullName below never is
+$widevine = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath((Join-Path $engine "WidevineCdm"))
 $bad = Get-ChildItem -Recurse -File $engine -Include *.exe, *.dll | ForEach-Object {
   $sig = Get-AuthenticodeSignature $_.FullName
   $signer = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { "" }
   $ok = $signer -match 'O=Microsoft Corporation' -or
-    ($signer -match 'O=Google LLC' -and $_.FullName.StartsWith($widevine + "\"))
+    ($signer -match 'O=Google LLC' -and $_.FullName.StartsWith($widevine + "\", [StringComparison]::OrdinalIgnoreCase))
   if ($sig.Status -ne "Valid" -or -not $ok) { "$($_.FullName) ($($sig.Status), $signer)" }
 }
 if ($bad) { throw "not signed by Microsoft (or Google, for Widevine):`n$($bad -join "`n")" }
