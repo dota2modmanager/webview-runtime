@@ -32,9 +32,11 @@ for helper in WebKitWebProcess WebKitNetworkProcess; do
 done
 grep -q "././$LIB/webkit2gtk-4.1" "$ROOT/$LIB/libwebkit2gtk-4.1.so.0" || { echo "helper path not patched" >&2; exit 1; }
 
+LIST=$(mktemp)
+find "$ROOT" -type f \( -name '*.so*' -o -name '*.real' \) ! -path "$ROOT/glibc/*" >"$LIST"
 bad=0
 checked=0
-for f in $(find "$ROOT" -type f \( -name '*.so*' -o -name '*.real' \) ! -path "$ROOT/glibc/*"); do
+while read -r f; do
   head -c 4 "$f" | grep -q 'ELF' || continue
   checked=$((checked + 1))
   out=$("$LOADER" --library-path "$PATHS" --list "$f" 2>&1 || true)
@@ -48,7 +50,7 @@ for f in $(find "$ROOT" -type f \( -name '*.so*' -o -name '*.real' \) ! -path "$
     echo "$f takes from outside the bundle: $outside" >&2
     bad=1
   fi
-done
+done <"$LIST"
 [ "$bad" -eq 0 ] || exit 1
 echo "whole: $checked ELF files resolve inside the bundle"
 
