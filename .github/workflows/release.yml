@@ -77,5 +77,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: |
-          gh release create "$TAG" --title "$TAG" --notes-file runtime.json \
+          gh release create "$TAG" --title "$TAG" --notes-file RELEASE_NOTES.md \
             runtime.json dist/*.cab dist/*.tar.gz dist/webview-runtime-linux-x64 dist/webview2-setup.exe
