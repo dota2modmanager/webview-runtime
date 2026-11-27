@@ -111,7 +111,7 @@ fn run() -> Result<ExitCode, String> {
             let launch = env_for(&installed, a.software);
             let mut cmd = launch.command(program.as_ref(), args);
             let status = cmd.status().map_err(|e| format!("{program}: {e}"))?;
-            Ok(ExitCode::from(status.code().unwrap_or(1).clamp(0, 255) as u8))
+            Ok(exit_code(status))
         }
         "selftest" => {
             let r = runtime.ok_or("no engine is known for this platform")?;
@@ -128,7 +128,7 @@ fn run() -> Result<ExitCode, String> {
                 .command(test.as_os_str(), std::iter::empty::<&str>())
                 .status()
                 .map_err(|e| format!("self-test: {e}"))?;
-            Ok(ExitCode::from(status.code().unwrap_or(1).clamp(0, 255) as u8))
+            Ok(exit_code(status))
         }
         other => Err(format!("unknown command {other}")),
     }
@@ -141,5 +141,15 @@ fn main() -> ExitCode {
             eprintln!("webview-runtime: {e}");
             ExitCode::from(2)
         }
+    }
+}
+
+/// The child's exit code as ours. Windows reports a failed start as a large negative NTSTATUS
+/// (0xC0000135, a DLL not found): anything outside 1..=255 but not 0 is 1, never 0.
+fn exit_code(status: std::process::ExitStatus) -> ExitCode {
+    match status.code() {
+        Some(0) => ExitCode::SUCCESS,
+        Some(c @ 1..=255) => ExitCode::from(c as u8),
+        _ => ExitCode::from(1),
     }
 }

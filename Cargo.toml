@@ -36,3 +36,8 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 opt-level = "s"
 lto = true
 strip = true
+
+# examples/selftest-win.rs: a WebView2 window the way Tauri makes one
+[target.'cfg(windows)'.dev-dependencies]
+wry = "0.57"
+tao = "0.37"

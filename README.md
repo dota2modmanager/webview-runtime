@@ -9,7 +9,7 @@ and used only when the system has none, or the last start never got its window u
 | System engine | Microsoft Edge WebView2 (Evergreen), shared, updated by EdgeUpdate | WebKitGTK 4.1 from the distribution, or the AppImage's copy mixed with the host's libraries |
 | Ours | WebView2 **Fixed Version** runtime, Microsoft's own signed files, unchanged | WebKitGTK 4.1 **with its whole library stack**, Mesa included, built on Ubuntu 22.04 |
 | Where it goes | `%LOCALAPPDATA%\dota2-mod-manager\webview-runtime\windows-x64-<version>` | `~/.local/share/dota2-mod-manager/webview-runtime/linux-x64-<version>` |
-| Size | about 180 MB packed | 416 MB unpacked, 3607 files (CI, 2026-11-27); Adwaita icons and all Mesa drivers are most of it |
+| Size | 438 MB packed (158.0.4370.45) | 416 MB unpacked, 3607 files (CI, 2026-11-27); Adwaita icons and all Mesa drivers are most of it |
 
 ## How it differs from the system's engine
 

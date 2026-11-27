@@ -30,8 +30,13 @@ struct Mark {
 pub fn find(base: &Path, runtime: &Runtime) -> Option<Installed> {
     let dir = base.join(runtime.folder_name());
     let mark: Mark = serde_json::from_slice(&std::fs::read(dir.join(MARK)).ok()?).ok()?;
-    let want = Mark { sha256: runtime.sha256.clone(), version: runtime.version.clone(), dir: dir.display().to_string() };
-    (mark == want && dir.join(&runtime.check).is_file()).then(|| Installed { dir, runtime: runtime.clone() })
+    let same_engine = mark.sha256 == runtime.sha256 && mark.version == runtime.version;
+    // the same folder however it was spelled: D:/x and D:\x, a symlink, a relative base
+    let same_folder = match (std::fs::canonicalize(&mark.dir), std::fs::canonicalize(&dir)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    (same_engine && same_folder && dir.join(&runtime.check).is_file()).then(|| Installed { dir, runtime: runtime.clone() })
 }
 
 /// Downloads, checks and unpacks `runtime` into `base`, then removes older engines of the same
@@ -239,7 +244,10 @@ mod tests {
         assert_eq!(cache, format!("\"{}/lib/libpixbufloader-png.so\"", got.dir.display()));
         assert!(!base.join("linux-x64-2.48.0").exists());
         assert!(!base.join(".part-linux-x64-2.50.1").exists());
-        assert_eq!(find(&base, &rt), Some(got));
+        assert_eq!(find(&base, &rt), Some(got.clone()));
+        // the same base spelled another way finds it too
+        let respelled = base.join(".").join("..").join(base.file_name().unwrap());
+        assert!(find(&respelled, &rt).is_some());
     }
 
     #[test]

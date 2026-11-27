@@ -51,11 +51,17 @@ if ($LASTEXITCODE -ne 0) { throw "expand.exe failed with $LASTEXITCODE" }
 $engine = Join-Path $unpacked $name
 if (-not (Test-Path (Join-Path $engine "msedgewebview2.exe"))) { throw "$name\msedgewebview2.exe is not in the cab" }
 
+# Microsoft signs everything but Widevine, Google's DRM module, which it ships as Google signed it
+# (seen in 158.0.4370.45). Google's signature counts only inside WidevineCdm\.
+$widevine = Join-Path $engine "WidevineCdm"
 $bad = Get-ChildItem -Recurse -File $engine -Include *.exe, *.dll | ForEach-Object {
   $sig = Get-AuthenticodeSignature $_.FullName
-  if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { $_.FullName }
+  $signer = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { "" }
+  $ok = $signer -match 'O=Microsoft Corporation' -or
+    ($signer -match 'O=Google LLC' -and $_.FullName.StartsWith($widevine + "\"))
+  if ($sig.Status -ne "Valid" -or -not $ok) { "$($_.FullName) ($($sig.Status), $signer)" }
 }
-if ($bad) { throw "not signed by Microsoft:`n$($bad -join "`n")" }
+if ($bad) { throw "not signed by Microsoft (or Google, for Widevine):`n$($bad -join "`n")" }
 
 $urls = @()
 if ($ReleaseUrl) { $urls += $ReleaseUrl }
