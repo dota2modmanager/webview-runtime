@@ -152,7 +152,9 @@ cp -a "/usr/$LIB/gconv" "$STAGE/glibc/gconv"
 cp -a /usr/lib/locale/C.utf8 "$STAGE/glibc/locale/C.utf8"
 
 # every executable becomes a wrapper that starts it through the bundle's loader when asked
-find "$STAGE" -type f ! -path "$STAGE/glibc/*" | while read -r f; do
+# Libraries are never wrapped, even runnable ones: 24.04's libcap.so.2 has an interpreter too,
+# and wrapping it left a shell script where the loader wanted an ELF ("invalid ELF header").
+find "$STAGE" -type f ! -path "$STAGE/glibc/*" ! -name '*.so' ! -name '*.so.*' | while read -r f; do
   file -b "$f" | grep -q 'interpreter /lib64/ld-linux-x86-64.so.2' || continue
   mv "$f" "$f.real"
   cat >"$f" <<'WRAP'

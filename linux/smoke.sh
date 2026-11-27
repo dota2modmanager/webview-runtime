@@ -16,6 +16,7 @@ ENTRY=$2
 LAUNCHER=$3
 LIB=lib/x86_64-linux-gnu
 
+# shellcheck disable=SC1091 # the host's own file, read for its name
 name=$( (. /etc/os-release && echo "$PRETTY_NAME") 2>/dev/null || echo unknown)
 echo "== $name"
 
