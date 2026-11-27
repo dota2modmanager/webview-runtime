@@ -46,6 +46,7 @@ static void on_snapshot(GObject *view, GAsyncResult *res, gpointer data) {
 
 static void on_load(WebKitWebView *view, WebKitLoadEvent event, gpointer data) {
     (void)data;
+    fprintf(stderr, "wvr-selftest: load event %d\n", event);
     if (event == WEBKIT_LOAD_FINISHED)
         webkit_web_view_get_snapshot(view, WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_NONE,
                                      NULL, on_snapshot, NULL);
@@ -70,18 +71,23 @@ static gboolean on_timeout(gpointer data) {
 }
 
 int main(int argc, char **argv) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    fprintf(stderr, "wvr-selftest: starting GTK\n");
     if (!gtk_init_check(&argc, &argv)) {
         fprintf(stderr, "wvr-selftest: no display (set DISPLAY or WAYLAND_DISPLAY)\n");
         return 2;
     }
     GtkWidget *win = gtk_offscreen_window_new();
     gtk_window_set_default_size(GTK_WINDOW(win), 160, 120);
+    fprintf(stderr, "wvr-selftest: GTK up, making the web view\n");
     GtkWidget *view = webkit_web_view_new();
     gtk_container_add(GTK_CONTAINER(win), view);
     g_signal_connect(view, "load-changed", G_CALLBACK(on_load), NULL);
     g_signal_connect(view, "load-failed", G_CALLBACK(on_failed), NULL);
     g_signal_connect(view, "web-process-terminated", G_CALLBACK(on_crash), NULL);
     g_timeout_add_seconds(90, on_timeout, NULL);
+    fprintf(stderr, "wvr-selftest: loading the page\n");
     webkit_web_view_load_html(WEBKIT_WEB_VIEW(view), PAGE, NULL);
     gtk_widget_show_all(win);
     gtk_main();

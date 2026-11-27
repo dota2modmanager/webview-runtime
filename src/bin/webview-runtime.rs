@@ -147,6 +147,13 @@ fn main() -> ExitCode {
 /// The child's exit code as ours. Windows reports a failed start as a large negative NTSTATUS
 /// (0xC0000135, a DLL not found): anything outside 1..=255 but not 0 is 1, never 0.
 fn exit_code(status: std::process::ExitStatus) -> ExitCode {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            eprintln!("webview-runtime: the program was killed by signal {sig}{}", if status.core_dumped() { " (core dumped)" } else { "" });
+        }
+    }
     match status.code() {
         Some(0) => ExitCode::SUCCESS,
         Some(c @ 1..=255) => ExitCode::from(c as u8),
