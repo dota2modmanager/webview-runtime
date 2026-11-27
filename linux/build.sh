@@ -87,7 +87,7 @@ done)
 [ -z "$missing" ] || { echo "$missing" >&2; exit 1; }
 
 # --- helpers under the working folder --------------------------------------------------------
-for f in "$STAGE"/$LIB/libwebkit2gtk-4.1.so.0.*; do
+for f in "$STAGE/$LIB"/libwebkit2gtk-4.1.so.0.*; do
   [ -L "$f" ] && continue
   grep -c "/usr/$LIB/webkit2gtk-4.1" "$f" >/dev/null || { echo "no helper path in $f" >&2; exit 1; }
   sed -i "s|/usr/$LIB/webkit2gtk-4.1|././$LIB/webkit2gtk-4.1|g" "$f"
@@ -115,7 +115,7 @@ printf '%s\n' "# files that name this folder as @ROOT@ (src/store.rs writes it i
 
 # --- licenses: everything shipped keeps its copyright files --------------------------------------
 mkdir -p "$STAGE/share/doc"
-for so in "$STAGE"/$LIB/*.so*; do
+for so in "$STAGE/$LIB"/*.so*; do
   pkg=$(dpkg -S "$(basename "$so")" 2>/dev/null | head -1 | cut -d: -f1) || continue
   [ -n "$pkg" ] && [ -f "/usr/share/doc/$pkg/copyright" ] && mkdir -p "$STAGE/share/doc/$pkg" &&
     cp "/usr/share/doc/$pkg/copyright" "$STAGE/share/doc/$pkg/"
