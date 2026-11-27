@@ -37,7 +37,7 @@ the app at all. Ours is one consistent set:
   distribution, package manager or library versions the host has;
 * the helper processes (`WebKitWebProcess`, `WebKitNetworkProcess`) are found inside the bundle
   (see `linux/build.sh` on how);
-* it starts with the DMA-BUF renderer off, and after two failed starts on it, with software
+* after two failed starts on it, it runs with software
   rendering (`LIBGL_ALWAYS_SOFTWARE`, compositing off), which works on any machine, only slower;
 * NVIDIA's proprietary driver is not in it: on such a machine ours draws with Mesa, in software.
 

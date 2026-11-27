@@ -161,11 +161,12 @@ pub fn linux_launch(dir: &Path, software: bool, own_glibc: bool) -> Launch {
         ("LIBGL_DRIVERS_PATH".into(), d(&format!("{lib}/dri"))),
         ("GBM_BACKENDS_PATH".into(), d(&format!("{lib}/gbm"))),
         ("__EGL_VENDOR_LIBRARY_DIRS".into(), d("share/glvnd/egl_vendor.d")),
-        // the host's own fonts.conf is included from it; the bundle adds DejaVu for hosts with none
+        // the host's font folders with the bundle's own rules, and DejaVu for hosts with none
         ("FONTCONFIG_FILE".into(), d("etc/fonts/fonts.conf")),
         ("XDG_DATA_DIRS".into(), format!("{}:{}", d("share"), host_data.unwrap_or_else(|| "/usr/local/share:/usr/share".into()))),
-        // a host's GPU path WebKit cannot use is the most common blank or black window
-        ("WEBKIT_DISABLE_DMABUF_RENDERER".into(), "1".into()),
+        // No WEBKIT_DISABLE_DMABUF_RENDERER: with WebKitGTK 2.52 the old path it selects crashed
+        // Dota 2 Mod Manager's window on Mint 22.3 and EndeavourOS (2026-11-27), and the DMA-BUF
+        // renderer falls back to shared memory by itself where the GPU cannot share buffers.
     ];
     let mut wrap = Vec::new();
     if own_glibc {
@@ -289,6 +290,7 @@ mod tests {
         assert!(plain.wrap.is_empty());
         assert!(plain.vars.iter().any(|(k, v)| k == "LD_LIBRARY_PATH" && v.ends_with("lib/x86_64-linux-gnu")));
         assert!(!plain.vars.iter().any(|(k, _)| k == "LIBGL_ALWAYS_SOFTWARE"));
+        assert!(!plain.vars.iter().any(|(k, _)| k == "WEBKIT_DISABLE_DMABUF_RENDERER"), "it crashes WebKitGTK 2.52 windows");
         assert!(linux_launch(dir, true, false).vars.iter().any(|(k, _)| k == "LIBGL_ALWAYS_SOFTWARE"));
     }
 

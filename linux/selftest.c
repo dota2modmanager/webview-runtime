@@ -78,7 +78,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "wvr-selftest: no display (set DISPLAY or WAYLAND_DISPLAY)\n");
         return 2;
     }
-    GtkWidget *win = gtk_offscreen_window_new();
+    /* a real window on the screen, as an app has: an offscreen one skipped the screen's GL and
+     * passed while Mod Manager's window crashed or stayed black on the same bundle */
+    GtkWidget *win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_default_size(GTK_WINDOW(win), 160, 120);
     fprintf(stderr, "wvr-selftest: GTK up, making the web view\n");
     GtkWidget *view = webkit_web_view_new();
