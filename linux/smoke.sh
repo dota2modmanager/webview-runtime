@@ -95,11 +95,18 @@ if ! command -v Xvfb >/dev/null 2>&1; then
   echo "no Xvfb: the page was not drawn"
   exit 0
 fi
-Xvfb :99 -screen 0 640x480x24 -nolisten tcp >/dev/null 2>&1 &
+XLOG=$(mktemp)
+Xvfb :99 -screen 0 640x480x24 -nolisten tcp >"$XLOG" 2>&1 &
 xvfb=$!
-trap 'kill $xvfb 2>/dev/null || true; rm -rf "$BASE"' EXIT
+trap 'kill $xvfb 2>/dev/null || true; rm -rf "$BASE" "$XLOG"' EXIT
 i=0
 while [ ! -e /tmp/.X11-unix/X99 ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
+if [ ! -e /tmp/.X11-unix/X99 ]; then
+  # the host's Xvfb, not the bundle: say why it did not start
+  echo "Xvfb did not start:" >&2
+  tail -20 "$XLOG" >&2
+  exit 1
+fi
 export DISPLAY=:99 NO_AT_BRIDGE=1
 selftest
 selftest --software

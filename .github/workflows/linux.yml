@@ -59,7 +59,7 @@ jobs:
           - { name: Debian 13, image: "debian:13", prep: "apt-get update -qq && apt-get install -y -qq xvfb" }
           - { name: Kali, image: "kalilinux/kali-rolling", prep: "apt-get update -qq && apt-get install -y -qq xvfb" }
           - { name: Arch, image: "archlinux:latest", prep: "pacman -Sy --noconfirm --needed xorg-server-xvfb" }
-          - { name: Manjaro, image: "manjarolinux/base", prep: "pacman -Sy --noconfirm --needed xorg-server-xvfb" }
+          - { name: Manjaro, image: "manjarolinux/base", prep: "pacman -Syu --noconfirm --needed xorg-server-xvfb xorg-xkbcomp xkeyboard-config" }
           - { name: Fedora, image: "fedora:latest", prep: "dnf -y -q install tar gzip findutils xorg-x11-server-Xvfb" }
           - { name: openSUSE Tumbleweed, image: "opensuse/tumbleweed", prep: "zypper -n -q in tar gzip findutils xorg-x11-server-Xvfb" }
           - { name: Alpine (musl), image: "alpine:latest", prep: "apk add -q xvfb findutils tar" }
